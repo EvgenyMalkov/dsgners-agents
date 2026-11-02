@@ -1,0 +1,6 @@
+[Unit]
+Description=dsgners: подтянуть обновления с GitHub
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/agents/dsgners-agents/deploy/autoupdate.sh

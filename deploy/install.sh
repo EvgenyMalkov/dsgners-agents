@@ -48,6 +48,11 @@ systemctl daemon-reload
 systemctl enable dsgners-bot >/dev/null
 systemctl restart dsgners-bot
 
+echo "== Автообновление с GitHub"
+cp "$APP/deploy/dsgners-autoupdate.service" "$APP/deploy/dsgners-autoupdate.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now dsgners-autoupdate.timer >/dev/null
+
 echo "== Проверка рендера"
 sudo -u agents bash -c "cd $APP && .venv/bin/python -m core.selftest"
 

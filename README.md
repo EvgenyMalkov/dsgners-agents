@@ -40,6 +40,8 @@ bash /home/agents/dsgners-agents/deploy/install.sh
 ```
 
 ## Обновление
+Автоматически: сервер раз в минуту проверяет GitHub и сам обновляется (не во время задач).
+Журнал: `tail /var/log/dsgners-autoupdate.log`. Вручную, если нужно срочно:
 ```bash
 bash /home/agents/dsgners-agents/deploy/update.sh
 ```

@@ -8,7 +8,9 @@ if [ ! -f /etc/caddy/Caddyfile ] || ! grep -q '^OFFICE_TOKEN=.\+' "$APP/.env"; t
   bash "$APP/deploy/install.sh"; exit 0
 fi
 sudo -u agents "$APP/.venv/bin/pip" install -q -r "$APP/requirements.txt"
-cp "$APP/deploy/dsgners-bot.service" /etc/systemd/system/ && systemctl daemon-reload
+cp "$APP/deploy/dsgners-bot.service" "$APP/deploy/dsgners-autoupdate.service" "$APP/deploy/dsgners-autoupdate.timer" /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now dsgners-autoupdate.timer >/dev/null
 systemctl restart dsgners-bot
 echo "Обновлено: $(sudo -u agents git -C "$APP" log -1 --format='%h %s')"
 echo "Офис: https://$(cat $APP/.office_domain)/?token=$(grep '^OFFICE_TOKEN=' $APP/.env | cut -d= -f2)"
