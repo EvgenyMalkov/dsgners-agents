@@ -8,7 +8,8 @@ import uuid
 from core import config
 
 AGENTS = {
-    "designer": {"title": "Дизайнер", "active": True},
+    "designer": {"title": "Графический дизайнер", "active": True},
+    "webdesigner": {"title": "Веб-дизайнер", "active": False},
     "smm": {"title": "SMM-щик", "active": False},
     "seo": {"title": "SEO-шник", "active": False},
 }

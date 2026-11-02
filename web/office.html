@@ -8,7 +8,7 @@
 :root{
   --bg:#F2F3F7; --panel:#FFFFFF; --line:#E1E2E5; --fg:#16181C; --muted:#676E7E;
   --accent:#4772FF; --lime:#D5F839; --ok:#46B566; --warn:#C98A12; --bad:#D14343;
-  --c-designer:#C6EA1F; --c-smm:#FF72FF; --c-seo:#4772FF;
+  --c-designer:#C6EA1F; --c-webdesigner:#FF9A3D; --c-smm:#FF72FF; --c-seo:#4772FF;
   --f-pixel:'Press Start 2P', ui-monospace, monospace;
   --f-body:'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
   --f-mono:'JetBrains Mono', ui-monospace, Menlo, monospace;
@@ -115,7 +115,8 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,.chip:focus-visi
 .ask textarea{flex:1;min-width:0;font:inherit;font-size:14px;padding:9px 12px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--fg);resize:none;height:42px;max-height:140px}
 .ask button{font:700 14px var(--f-body);padding:0 16px;border-radius:9px;border:0;background:var(--fg);color:var(--bg);cursor:pointer}
 
-.chips{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.chips{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px}
+@media (max-width:900px){.chips{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .chip{display:flex;flex-direction:column;gap:4px;text-align:left;font:inherit;color:inherit;background:var(--panel);border:1px solid var(--line);border-left:5px solid var(--c);border-radius:10px;padding:10px 12px;cursor:pointer;min-width:0}
 .chip[aria-pressed="true"]{outline:2px solid var(--c);outline-offset:-1px}
 .chip .n{font-weight:700;display:flex;gap:6px;align-items:center;justify-content:space-between}
@@ -173,7 +174,7 @@ dialog::backdrop{background:#0009}
       <div class="panel" id="pHistory" hidden><div class="jobs" id="jobs"></div></div>
       <div class="panel" id="pKnow" hidden><div class="kn" id="kn"></div></div>
       <form class="ask" id="askForm" hidden>
-        <textarea id="askInput" rows="1" aria-label="Задача агенту" placeholder="Задача дизайнеру…"></textarea>
+        <textarea id="askInput" rows="1" aria-label="Задача агенту" placeholder="Задача…"></textarea>
         <button>Дать</button>
       </form>
     </aside>
@@ -189,9 +190,10 @@ dialog::backdrop{background:#0009}
 (() => {
 const W = 240, H = 150;
 const TEAM = [
-  {id:'designer', title:'Дизайнер', desk:[120,62], big:true},
-  {id:'smm',      title:'SMM-щик',  desk:[52,108]},
-  {id:'seo',      title:'SEO-шник', desk:[188,108]},
+  {id:'designer',    title:'Графический дизайнер', tag:'Граф. дизайнер', desk:[120,62], big:true},
+  {id:'webdesigner', title:'Веб-дизайнер', desk:[44,104]},
+  {id:'smm',         title:'SMM-щик',  desk:[120,114]},
+  {id:'seo',         title:'SEO-шник', desk:[196,104]},
 ];
 const ST_RU = {idle:'свободен', thinking:'думает', working:'работает', waiting:'ждёт тебя', error:'ошибка', soon:'скоро'};
 const JS_RU = {queued:'в очереди', running:'в работе', review:'на согласовании', approved:'принято', redo:'переделано', error:'ошибка', empty:'пусто'};
@@ -213,7 +215,7 @@ if (location.search.includes('token=')) history.replaceState(null, '', location.
 const A = {};
 TEAM.forEach(t => {
   const seat = [t.desk[0] + 8, t.desk[1] - 1];
-  A[t.id] = {...t, seat, x:seat[0], y:seat[1], path:[], status:'idle', task:'', pending:0, inactive:false,
+  A[t.id] = {...t, tag_: t.tag, seat, x:seat[0], y:seat[1], path:[], status:'idle', task:'', pending:0, inactive:false,
              walking:false, away:false, nextWander: 6 + Math.random()*14, blink:0, phase:Math.random()*6};
 });
 let events = [], jobs = [], selected = 'designer', tab = 'feed';
@@ -224,7 +226,7 @@ const ov = $('ov');
 const pct = (x, y) => ({left: (x / W * 100) + '%', top: (y / H * 100) + '%'});
 TEAM.forEach(t => {
   const tag = document.createElement('div');
-  tag.className = 'tag'; tag.textContent = t.title; tag.style.setProperty('--c', color(t.id));
+  tag.className = 'tag'; tag.textContent = t.tag || t.title; tag.style.setProperty('--c', color(t.id));
   Object.assign(tag.style, pct(t.desk[0], t.desk[1] + (t.big ? 9 : 8)));
   ov.appendChild(tag); A[t.id].tag = tag;
   const b = document.createElement('div'); b.className = 'bubble'; b.style.opacity = 0;
@@ -397,7 +399,7 @@ function renderAgent(id){
   const s = ch.querySelector('.s'); s.className = 's st-' + st; s.textContent = ST_RU[st] || st;
   ch.querySelector('.tk').textContent = a.inactive ? 'в разработке' : (a.task || ' ');
   const bd = ch.querySelector('.cnt'); bd.hidden = !a.pending; bd.textContent = a.pending;
-  a.tag.textContent = a.title + (a.inactive ? ' · скоро' : ''); a.tag.classList.toggle('soon', a.inactive);
+  a.tag.textContent = (a.tag_ || a.title) + (a.inactive ? ' · скоро' : ''); a.tag.classList.toggle('soon', a.inactive);
   updateBubble(a);
   if (selected === id) renderSide();
 }
@@ -554,7 +556,7 @@ function renderSide(){
   $('allBtn').hidden = !a;
   $('knowTab').hidden = !a;
   $('askForm').hidden = !a || a.inactive;
-  $('askInput').placeholder = a ? `Задача: ${a.title.toLowerCase()}…` : '';
+  $('askInput').placeholder = 'Опиши задачу…';
 }
 function select(id){
   selected = id;

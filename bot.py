@@ -24,11 +24,11 @@ BOT: Bot | None = None
 
 HELP = (
     "Команда dsgners на связи.\n\n"
-    "Напиши задачу — её возьмёт дизайнер. Например:\n"
+    "Напиши задачу — её возьмёт графический дизайнер. Например:\n"
     "«Обложка для поста: как мы переделали онбординг, конверсия +34%. Телега и сторис»\n\n"
     "Можно прислать картинку (работу автора) с подписью-задачей.\n\n"
     "/office — ссылка на ИИ-офис\n"
-    "/rules — правила, которые дизайнер выучил из твоих правок\n"
+    "/rules — правила, которые графический дизайнер выучил из твоих правок\n"
     "/spend — расходы на API за месяц"
 )
 
@@ -91,7 +91,7 @@ async def with_image(m: Message, bot: Bot):
     await bot.download(file_id, destination=dest)
     shown = m.caption or "Визуал с прикреплённой работой"
     runner.start_job("designer", shown, source="telegram", full_task=f"{shown}\n\nПрикреплённая картинка: {dest}")
-    await m.answer("🎨 Дизайнер взял задачу. Пришлю результат сюда.")
+    await m.answer("🎨 Графический дизайнер взял задачу. Пришлю результат сюда.")
 
 
 @dp.message(F.text)
@@ -108,7 +108,7 @@ async def text_task(m: Message):
             await m.answer(f"Не вышло: {e}")
         return
     runner.start_job("designer", m.text, source="telegram")
-    await m.answer("🎨 Дизайнер взял задачу. Пришлю результат сюда.")
+    await m.answer("🎨 Графический дизайнер взял задачу. Пришлю результат сюда.")
 
 
 async def send_review(job: dict):
