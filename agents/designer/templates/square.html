@@ -1,0 +1,25 @@
+{% extends "_base.html" %}
+{% block css %}
+.col{left:72px;right:72px;top:{{ 668 if image else 72 }}px;bottom:72px;gap:28px}
+.badge{font-size:26px;padding:12px 24px}
+.title{font-size:{{ 68 if image else 96 }}px;max-height:{{ 150 if image else 500 }}px;max-width:820px}
+.sub{font-size:{{ 28 if image else 32 }}px;max-height:{{ 80 if image else 130 }}px;max-width:720px}
+.logo{font-size:32px}
+.c1{width:340px;height:340px;right:-80px;top:-80px}
+.r1{width:190px;height:230px;right:300px;top:-90px;border-radius:36px}
+.c2{width:90px;height:90px;right:72px;top:300px}
+.photo{left:72px;right:72px;top:72px;width:936px;height:568px;border-radius:32px}
+.has-image .badge{position:absolute;left:96px;top:96px}
+{% endblock %}
+{% block body %}
+{% if image %}<img class="photo" src="{{ image }}" alt="">{% if rubric %}<span class="badge" data-over>{{ rubric }}</span>{% endif %}{% else %}
+<div class="c1"></div><div class="r1"></div><div class="c2"></div>{% endif %}
+<div class="col" data-box>
+  {% if rubric and not image %}<span class="badge">{{ rubric }}</span>{% endif %}
+  {% if not image %}<div class="grow"></div>{% endif %}
+  <h1 class="title" data-fit data-min="44">{{ title }}</h1>
+  {% if subtitle %}<p class="sub" data-fit data-min="24">{{ subtitle }}</p>{% endif %}
+  {% if image %}<div class="grow"></div>{% endif %}
+  <div class="logo" style="margin-top:12px">{{ ds.logo }}</div>
+</div>
+{% endblock %}

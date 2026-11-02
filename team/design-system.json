@@ -1,0 +1,26 @@
+{
+  "font": "Inter",
+  "logo": "DSGNERS!",
+  "color": {
+    "ink": "#16181C",
+    "text": "#292C32",
+    "muted": "#676E7E",
+    "muted_on_dark": "#C9CCD3",
+    "line": "#E1E2E5",
+    "bg": "#F2F3F7",
+    "white": "#FFFFFF",
+    "lime": "#D5F839",
+    "lime_text": "#2A2E12",
+    "blue": "#4772FF",
+    "blue_dark": "#2F57D9",
+    "pink": "#FF72FF",
+    "green": "#46B566"
+  },
+  "radius": { "s": 12, "m": 16, "l": 24, "xl": 32, "xxl": 40 },
+  "themes": {
+    "dark":  { "bg": "#16181C", "fg": "#FFFFFF", "muted": "#C9CCD3", "badge_bg": "#D5F839", "badge_fg": "#16181C", "a1": "#FF72FF", "a2": "#4772FF", "a3": "#D5F839" },
+    "lime":  { "bg": "#D5F839", "fg": "#16181C", "muted": "#2A2E12", "badge_bg": "#16181C", "badge_fg": "#D5F839", "a1": "#FF72FF", "a2": "#4772FF", "a3": "#16181C" },
+    "light": { "bg": "#F2F3F7", "fg": "#292C32", "muted": "#676E7E", "badge_bg": "#4772FF", "badge_fg": "#FFFFFF", "a1": "#D5F839", "a2": "#4772FF", "a3": "#FF72FF" },
+    "blue":  { "bg": "#4772FF", "fg": "#FFFFFF", "muted": "#E9EEFF", "badge_bg": "#FFFFFF", "badge_fg": "#4772FF", "a1": "#D5F839", "a2": "#16181C", "a3": "#FF72FF" }
+  }
+}

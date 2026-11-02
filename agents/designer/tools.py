@@ -1,0 +1,78 @@
+"""Инструменты дизайнера: render_visual и finish."""
+import json
+import re
+
+from core.agent import Ctx, image_block
+from core.render import render, templates_index
+
+
+def system_extra() -> str:
+    return "# Доступные шаблоны\n```json\n" + json.dumps(templates_index(), ensure_ascii=False, indent=1) + "\n```"
+
+
+TOOLS = [
+    {
+        "name": "render_visual",
+        "description": "Отрендерить визуал по шаблону. Возвращает картинку и список проблем вёрстки "
+                       "(пустой список = всё чисто). Повторный вызов с тем же name перезаписывает файл.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "template": {"type": "string", "enum": ["tg-post", "square", "story", "site-banner"]},
+                "name": {"type": "string", "description": "короткое имя файла латиницей, напр. onboarding-tg"},
+                "data": {
+                    "type": "object",
+                    "description": "Поля шаблона: title, rubric, subtitle, cta, theme, image",
+                    "properties": {
+                        "title": {"type": "string"}, "rubric": {"type": "string"},
+                        "subtitle": {"type": "string"}, "cta": {"type": "string"},
+                        "theme": {"type": "string", "enum": ["dark", "lime", "light", "blue"]},
+                        "image": {"type": "string"},
+                    },
+                    "required": ["title"],
+                },
+            },
+            "required": ["template", "name", "data"],
+        },
+    },
+    {
+        "name": "finish",
+        "description": "Сдать работу владельцу на согласование.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "files": {"type": "array", "items": {"type": "string"}, "description": "имена из render_visual"},
+                "caption": {"type": "string", "description": "что сделал и почему, 1–3 предложения"},
+            },
+            "required": ["files", "caption"],
+        },
+    },
+]
+
+
+def _safe_name(name: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-")[:40] or "visual"
+
+
+async def handle(name: str, inp: dict, ctx: Ctx):
+    if name == "render_visual":
+        fname = _safe_name(inp["name"])
+        png = ctx.job_dir / f"{fname}.png"
+        if ctx.progress:
+            await ctx.progress(f"рендерю {inp['template']}: {inp['data'].get('title', '')[:40]}")
+        issues = await render(inp["template"], inp.get("data", {}), png)
+        text = ("Проблем нет." if not issues else "Найдены проблемы:\n- " + "\n- ".join(issues))
+        return [{"type": "text", "text": f"Файл: {fname}\n{text}"}, image_block(png)]
+
+    if name == "finish":
+        files = []
+        for f in inp.get("files", []):
+            p = ctx.job_dir / f"{_safe_name(f.removesuffix('.png'))}.png"
+            if p.exists():
+                files.append(p)
+        if not files:
+            return [{"type": "text", "text": "Ни одного из этих файлов нет — сначала render_visual."}]
+        ctx.files, ctx.caption, ctx.done = files, inp.get("caption", ""), True
+        return [{"type": "text", "text": "Сдано на согласование."}]
+
+    return [{"type": "text", "text": f"Нет инструмента {name}"}]

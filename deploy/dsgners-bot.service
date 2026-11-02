@@ -1,0 +1,15 @@
+[Unit]
+Description=dsgners AI team (Telegram bot)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=agents
+WorkingDirectory=/home/agents/dsgners-agents
+ExecStart=/home/agents/dsgners-agents/.venv/bin/python bot.py
+Restart=always
+RestartSec=5
+Environment=PYTHONUNBUFFERED=1
+
+[Install]
+WantedBy=multi-user.target

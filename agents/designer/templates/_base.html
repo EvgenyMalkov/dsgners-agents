@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+{% set t = ds.themes[theme or 'dark'] if (theme or 'dark') in ds.themes else ds.themes['dark'] %}
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#808080}
+#canvas{position:relative;overflow:hidden;width:{{ W }}px;height:{{ H }}px;
+  background:{{ t.bg }};color:{{ t.fg }};font-family:'Inter',system-ui,sans-serif;
+  font-feature-settings:"ss01","cv11";-webkit-font-smoothing:antialiased}
+.badge{display:inline-block;align-self:flex-start;background:{{ t.badge_bg }};color:{{ t.badge_fg }};
+  font-weight:700;border-radius:999px;white-space:nowrap}
+.title{font-weight:800;letter-spacing:-.035em;line-height:1.02;overflow:hidden;text-wrap:balance;hyphens:manual}
+.sub{color:{{ t.muted }};line-height:1.38;font-weight:500;overflow:hidden}
+.logo{font-weight:800;letter-spacing:-.02em;white-space:nowrap}
+.cta{display:inline-block;align-self:flex-start;background:{{ t.badge_bg }};color:{{ t.badge_fg }};font-weight:700;white-space:nowrap}
+.col{position:absolute;display:flex;flex-direction:column;min-height:0}
+.grow{flex:1 1 auto;min-height:0}
+.c1,.c2,.c3,.r1{position:absolute}
+.c1{border-radius:50%;background:{{ t.a1 }}}
+.r1{background:{{ t.a2 }}}
+.c2{border-radius:50%;background:{{ t.a3 }}}
+.photo{position:absolute;object-fit:cover;display:block;background:{{ t.muted }}}
+{% block css %}{% endblock %}
+</style></head>
+<body><div id="canvas" class="{% if image %}has-image{% endif %}">
+{% block body %}{% endblock %}
+</div></body></html>

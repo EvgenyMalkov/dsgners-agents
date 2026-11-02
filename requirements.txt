@@ -1,0 +1,6 @@
+anthropic>=0.70
+aiogram>=3.13,<4
+jinja2>=3.1
+playwright>=1.48
+pillow>=10
+python-dotenv>=1.0
