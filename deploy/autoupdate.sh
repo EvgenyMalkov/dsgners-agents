@@ -1,19 +1,30 @@
 #!/usr/bin/env bash
-# Запускается таймером раз в минуту (от root): если на GitHub есть новое — обновляет и перезапускает.
-# Не перезапускает, пока какой-то агент выполняет задачу.
+# Таймер раз в минуту (от root): откат по запросу из бота, иначе — обновление, если есть новое.
+# Не трогает сервер, пока агент выполняет задачу.
 set -uo pipefail
-APP=/home/agents/dsgners-agents
+source /home/agents/dsgners-agents/deploy/_lib.sh
 LOG=/var/log/dsgners-autoupdate.log
-G="sudo -u agents git -C $APP"
 
-$G fetch -q origin main 2>>"$LOG" || exit 0
-[ "$($G rev-parse HEAD)" = "$($G rev-parse origin/main)" ] && exit 0
+busy(){
+  local db="$APP/data/office.db"
+  [ -f "$db" ] || return 1
+  local n; n=$($PY -c "import sqlite3;print(sqlite3.connect('$db').execute(\"select count(*) from jobs where status in ('queued','running')\").fetchone()[0])" 2>/dev/null || echo 0)
+  [ "${n:-0}" != "0" ]
+}
 
-DB="$APP/data/office.db"
-if [ -f "$DB" ]; then
-  BUSY=$(sudo -u agents "$APP/.venv/bin/python" -c "import sqlite3;print(sqlite3.connect('$DB').execute(\"select count(*) from jobs where status in ('queued','running')\").fetchone()[0])" 2>/dev/null || echo 0)
-  [ "${BUSY:-0}" != "0" ] && exit 0
+if [ -f "$STATE/rollback_request" ]; then
+  busy && exit 0
+  rm -f "$STATE/rollback_request"
+  echo "$(date '+%F %T') откат по запросу" >> "$LOG"
+  bash "$APP/deploy/rollback.sh" >> "$LOG" 2>&1
+  exit 0
 fi
 
-echo "$(date '+%F %T') обновляю до $($G log -1 --format='%h %s' origin/main)" >> "$LOG"
+$G fetch -q origin main 2>>"$LOG" || exit 0
+NEW=$($G rev-parse origin/main)
+[ "$NEW" = "$($G rev-parse HEAD)" ] && exit 0
+[ "$NEW" = "$(cat "$STATE/bad" 2>/dev/null)" ] && exit 0
+busy && exit 0
+
+echo "$(date '+%F %T') обновляю до $($G log -1 --format='%h %s' "$NEW")" >> "$LOG"
 bash "$APP/deploy/update.sh" >> "$LOG" 2>&1

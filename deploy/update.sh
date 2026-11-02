@@ -1,16 +1,38 @@
 #!/usr/bin/env bash
-# Обновить код с GitHub и перезапустить. От root: bash /home/agents/dsgners-agents/deploy/update.sh
-set -euo pipefail
-APP=/home/agents/dsgners-agents
-sudo -u agents git -C "$APP" pull --ff-only
-# новые системные части (офис, https) ставятся установщиком — он безопасен для повторного запуска
-if [ ! -f /etc/caddy/Caddyfile ] || ! grep -q '^OFFICE_TOKEN=.\+' "$APP/.env"; then
-  bash "$APP/deploy/install.sh"; exit 0
+# Обновить до новой версии с GitHub с проверкой и автооткатом. От root:
+#   bash /home/agents/dsgners-agents/deploy/update.sh
+set -uo pipefail
+source /home/agents/dsgners-agents/deploy/_lib.sh
+
+$G fetch -q origin main || { echo "Нет связи с GitHub"; exit 1; }
+TARGET=$($G rev-parse origin/main)
+PREV=$($G rev-parse HEAD)
+[ "$PREV" = "$TARGET" ] && { echo "Уже последняя версия"; exit 0; }
+MSG=$($G log -1 --format='%h %s' "$TARGET")
+
+# первая установка системных частей (офис, https, таймер)
+if [ ! -f /etc/caddy/Caddyfile ] || [ -z "$(envget OFFICE_TOKEN)" ]; then
+  $G reset -q --hard "$TARGET"; bash "$APP/deploy/install.sh"; exit $?
 fi
-sudo -u agents "$APP/.venv/bin/pip" install -q -r "$APP/requirements.txt"
-cp "$APP/deploy/dsgners-bot.service" "$APP/deploy/dsgners-autoupdate.service" "$APP/deploy/dsgners-autoupdate.timer" /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now dsgners-autoupdate.timer >/dev/null
+
+back(){  # вернуть прежнюю версию
+  echo "$TARGET" > "$STATE/bad"
+  $G reset -q --hard "$PREV"; deps; install_units; systemctl restart dsgners-bot
+  notify "⚠️ Обновление «$MSG» $1 — оставил прежнюю версию, всё работает как раньше."
+  echo "Откат: $1"; exit 1
+}
+
+echo "Проверяю $MSG"
+$G reset -q --hard "$TARGET"
+deps || back "не поставило зависимости"
+(cd "$APP" && $PY -m core.selftest) || back "не прошло проверку"
+
+install_units
 systemctl restart dsgners-bot
-echo "Обновлено: $(sudo -u agents git -C "$APP" log -1 --format='%h %s')"
-echo "Офис: https://$(cat $APP/.office_domain)/?token=$(grep '^OFFICE_TOKEN=' $APP/.env | cut -d= -f2)"
+healthy || back "не запустилось"
+
+echo "$PREV" >> "$STATE/history"
+rm -f "$STATE/bad"
+notify "✅ Обновлено: $MSG"
+echo "Обновлено: $MSG"
+echo "Офис: https://$(cat "$APP/.office_domain" 2>/dev/null)/?token=$(envget OFFICE_TOKEN)"

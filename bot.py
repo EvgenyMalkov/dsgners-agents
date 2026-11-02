@@ -29,7 +29,8 @@ HELP = (
     "Можно прислать картинку (работу автора) с подписью-задачей.\n\n"
     "/office — ссылка на ИИ-офис\n"
     "/rules — правила, которые графический дизайнер выучил из твоих правок\n"
-    "/spend — расходы на API за месяц"
+    "/spend — расходы на API за месяц\n"
+    "/rollback — вернуть предыдущую версию системы"
 )
 
 
@@ -60,6 +61,19 @@ async def office_link(m: Message):
         await m.answer(f"https://{dom.read_text().strip()}/?token={config.OFFICE_TOKEN}\n\nНикому не пересылай — по ссылке полный доступ.")
     else:
         await m.answer("Офис ещё не установлен — запусти deploy/install.sh на сервере.")
+
+
+@dp.message(Command("rollback"))
+async def rollback(m: Message):
+    if not is_owner(m):
+        return
+    d = config.DATA / "deploy"
+    if not (d / "history").exists() or not (d / "history").read_text().strip():
+        await m.answer("Откатывать некуда — это первая установленная версия.")
+        return
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "rollback_request").write_text("1")
+    await m.answer("Ок, верну предыдущую версию в течение минуты (если агент сейчас работает — после его задачи).")
 
 
 @dp.message(Command("rules"))

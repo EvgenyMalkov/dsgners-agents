@@ -1,15 +1,35 @@
-"""Проверка без API: рендерит тестовый визуал. Запуск: .venv/bin/python -m core.selftest"""
+"""Проверка версии перед запуском (без API): код импортируется, офис собирается, рендер работает.
+Запуск: .venv/bin/python -m core.selftest — код выхода 0, если всё хорошо."""
 import asyncio
+import importlib
+import sys
 
 from core import config
-from core.render import render
 
 
-async def main():
+async def main() -> int:
+    import bot  # noqa: F401 — бот импортируется без ошибок
+    from core.agent import build_system
+    from core.office import AGENTS
+    from core.render import render
+    from core.web import make_app
+
+    make_app()
+    for a, meta in AGENTS.items():
+        if meta["active"]:
+            tools = importlib.import_module(f"agents.{a}.tools")
+            assert tools.TOOLS, f"у агента {a} нет инструментов"
+            build_system(a, getattr(tools, "system_extra", lambda: "")())
     out = config.OUTBOX / "selftest" / "tg-post.png"
-    issues = await render("tg-post", {"rubric": "Тест", "title": "Дизайнер dsgners на связи", "theme": "dark"}, out)
-    print("Рендер OK:", out, "| проблемы:", issues or "нет")
+    issues = await render("tg-post", {"rubric": "Тест", "title": "Проверка версии", "theme": "dark"}, out)
+    assert out.exists() and out.stat().st_size > 5000, "рендер не создал картинку"
+    print("Проверка пройдена. Рендер:", out, "| замечания вёрстки:", issues or "нет")
+    return 0
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        sys.exit(asyncio.run(main()))
+    except Exception as e:
+        print("ПРОВЕРКА НЕ ПРОЙДЕНА:", repr(e))
+        sys.exit(1)
