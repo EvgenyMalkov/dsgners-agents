@@ -15,6 +15,12 @@ async def main() -> int:
     from core.web import make_app
 
     make_app()
+    from core.seo import monitor, page, scheduler  # noqa: F401 — SEO-мониторинг импортируется
+    rep = page.analyze(page.Fetched(url="https://x.ru/a", final="https://x.ru/a", status=200,
+                                    html="<html lang=ru><head><title>Тест</title></head><body><h1>Т</h1></body></html>"),
+                       is_article=True)
+    assert any(c == "no_description" for _, c, _ in rep.issues), "проверка страниц сломана"
+    assert scheduler.JOBS and monitor.status_text()
     for a, meta in AGENTS.items():
         if meta["active"]:
             tools = importlib.import_module(f"agents.{a}.tools")

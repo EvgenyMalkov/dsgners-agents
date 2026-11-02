@@ -15,6 +15,7 @@ from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton, Inl
 
 from core import config, feedback, runner, spend
 from core.office import AGENTS
+from core.seo import monitor as seo_monitor, scheduler as seo_scheduler
 from core.web import start_web
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -33,6 +34,10 @@ HELP = (
     "/smm задача — SMM-щик (посты в Telegram; публикует только после твоего «Ок»)\n"
     "/seo задача — SEO-шник (аудит, мета-теги, тексты, ТЗ)\n\n"
     "Картинку можно прислать с подписью-задачей (тоже с командой, если не дизайнеру).\n\n"
+    "/seo_status — SEO-мониторинг: когда что проверялось и какие проблемы\n"
+    "/seo_scan hourly|new|daily|weekly — запустить проверку сайта сейчас\n"
+    "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
+    "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n\n"
     "/office — ссылка на ИИ-офис\n"
     "/rules [smm|web|seo] — правила, выученные из твоих правок\n"
     "/spend — расходы на API за месяц\n"
@@ -109,6 +114,81 @@ async def spend_cmd(m: Message):
         return
     parts = [f"{AGENTS.get(a, {}).get('title', a)}: ${v:.2f}" for a, v in spend.by_agent_this_month().items()]
     await m.answer(f"Расход за месяц: ${spend.this_month():.2f} из ${config.MONTHLY_LIMIT_USD:.0f}\n" + "\n".join(parts))
+
+
+SCAN = {"hourly": "hourly", "new": "new_pages", "new_pages": "new_pages", "daily": "daily", "weekly": "weekly"}
+
+
+@dp.message(Command("seo_status"))
+async def seo_status(m: Message):
+    if is_owner(m):
+        await m.answer(seo_monitor.status_text()[:3900])
+
+
+@dp.message(Command("seo_scan"))
+async def seo_scan(m: Message):
+    if not is_owner(m):
+        return
+    arg = (m.text or "").partition(" ")[2].strip().lower() or "hourly"
+    name = SCAN.get(arg)
+    if not name:
+        await m.answer("Варианты: /seo_scan hourly | new | daily | weekly")
+        return
+    if name == "weekly":
+        await m.answer("Запустил полный обход сайта — это может занять до часа, отчёт пришлю.")
+        asyncio.create_task(seo_scheduler.run(name))
+        return
+    await m.answer(f"Проверяю ({arg})…")
+    await m.answer(f"🔎 {arg}: {await seo_scheduler.run(name)}")
+
+
+def _url_arg(m: Message) -> str:
+    u = (m.text or "").partition(" ")[2].strip()
+    return u if not u or u.startswith("http") else "https://" + u
+
+
+@dp.message(Command("seo_page"))
+async def seo_page(m: Message):
+    if not is_owner(m):
+        return
+    url = _url_arg(m)
+    if not url:
+        await m.answer("Пример: /seo_page https://dsgners.ru/…")
+        return
+    from core.seo import page
+    rep = await page.check_url(url, is_article=seo_monitor.is_content(url))
+    await m.answer(rep.summary()[:3900])
+
+
+@dp.message(Command("seo_fix"))
+async def seo_fix(m: Message):
+    if not is_owner(m):
+        return
+    url = _url_arg(m)
+    if not url:
+        await m.answer("Пример: /seo_fix https://dsgners.ru/… — SEO-шник подготовит title, description, разметку, alt и ссылки.")
+        return
+    from core.seo import page
+    rep = await page.check_url(url, is_article=True)
+    try:
+        seo_monitor.start_optimize(url, rep, auto=False)
+    except ValueError as e:
+        await m.answer(str(e))
+        return
+    await m.answer("🔎 SEO-шник взял статью. Пришлю готовый пакет: что вставить в поля, разметку и alt.")
+
+
+async def seo_notify(text: str, files: list):
+    if not BOT:
+        return
+    for uid in config.OWNER_IDS:
+        await BOT.send_message(uid, text[:3900])
+        for f in files:
+            await BOT.send_document(uid, FSInputFile(f))
+
+
+def seo_start_job(agent: str, task: str, source: str, full_task: str) -> str:
+    return runner.start_job(agent, task, source=source, full_task=full_task)
 
 
 @dp.message(F.photo | F.document)
@@ -249,6 +329,8 @@ async def main():
     global BOT
     await start_web()
     logging.info("ИИ-офис слушает порт %s", config.OFFICE_PORT)
+    seo_monitor.setup(seo_notify, seo_start_job)
+    asyncio.create_task(seo_scheduler.loop())
     if not config.TELEGRAM_BOT_TOKEN:
         logging.warning("Нет TELEGRAM_BOT_TOKEN — работает только офис")
         await asyncio.Event().wait()
