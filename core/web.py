@@ -9,7 +9,7 @@ from pathlib import Path
 
 from aiohttp import WSMsgType, web
 
-from core import config, knowledge, runner, spend
+from core import config, knowledge, runner, skills, spend
 from core.office import AGENTS, office
 
 PAGE = config.ROOT / "web" / "office.html"
@@ -102,7 +102,8 @@ async def job(req):
     j = office.get_job(req.match_info["jid"])
     if not j:
         raise web.HTTPNotFound()
-    j["children"] = [x["id"] for x in office.list_jobs(j["agent"], 200) if x.get("parent") == j["id"]]
+    j["children"] = [{"id": x["id"], "source": x["source"], "agent": x["agent"]}
+                     for x in office.list_jobs(None, 400) if x.get("parent") == j["id"]]
     return web.json_response(j)
 
 
@@ -131,7 +132,14 @@ def _safe_file(base: Path, rel: str) -> Path:
 
 
 async def outbox_file(req):
-    return web.FileResponse(_safe_file(config.OUTBOX, req.match_info["tail"]))
+    p = _safe_file(config.OUTBOX, req.match_info["tail"])
+    headers = {}
+    if p.suffix.lower() in (".html", ".htm", ".svg"):
+        # макеты агентов открываем в песочнице: у них нет доступа к офису
+        headers["Content-Security-Policy"] = "sandbox; script-src 'none'"
+    if p.suffix.lower() in (".md", ".txt"):
+        return web.Response(text=p.read_text("utf-8", errors="ignore"), content_type="text/plain", charset="utf-8")
+    return web.FileResponse(p, headers=headers)
 
 
 async def kfile(req):
@@ -183,6 +191,62 @@ async def k_delete(req):
     return web.json_response(knowledge.overview(a))
 
 
+# ---------- навыки ----------
+async def sk_list(req):
+    return web.json_response(skills.list_skills(_agent(req)))
+
+
+async def sk_get(req):
+    try:
+        raw = skills.read_raw(_agent(req), req.match_info["slug"])
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=404)
+    meta, body = skills.parse(raw)
+    return web.json_response({"slug": req.match_info["slug"], "name": meta.get("name", ""),
+                              "description": meta.get("description", ""), "body": body.strip()})
+
+
+async def sk_save(req):
+    a = _agent(req)
+    b = await req.json()
+    if not (b.get("name") or "").strip() or not (b.get("body") or "").strip():
+        return web.json_response({"error": "Нужны название и инструкция"}, status=400)
+    slug = req.match_info.get("slug")
+    slug = skills.save(a, None if slug in (None, "new") else slug, b["name"], b.get("description", ""), b["body"])
+    office.emit(a, "info", f"Навык сохранён: {b['name']}")
+    return web.json_response({"slug": slug, "skills": skills.list_skills(a)})
+
+
+async def sk_toggle(req):
+    a = _agent(req)
+    b = await req.json()
+    skills.set_enabled(a, req.match_info["slug"], bool(b.get("enabled")))
+    return web.json_response(skills.list_skills(a))
+
+
+async def sk_delete(req):
+    a = _agent(req)
+    try:
+        skills.delete(a, req.match_info["slug"])
+    except ValueError as e:
+        return web.json_response({"error": str(e)}, status=400)
+    return web.json_response(skills.list_skills(a))
+
+
+async def sk_upload(req):
+    a = _agent(req)
+    form = await req.post()
+    f = form.get("file")
+    if f is None or not hasattr(f, "file"):
+        return web.json_response({"error": "Нет файла"}, status=400)
+    try:
+        slug = skills.upload(a, f.filename, f.file.read())
+    except Exception as e:
+        return web.json_response({"error": str(e)}, status=400)
+    office.emit(a, "info", f"Загружен навык: {slug}")
+    return web.json_response({"slug": slug, "skills": skills.list_skills(a)})
+
+
 def make_app() -> web.Application:
     app = web.Application(middlewares=[auth], client_max_size=16 * 1024 * 1024)
     app.router.add_get("/", page)
@@ -199,6 +263,13 @@ def make_app() -> web.Application:
     app.router.add_post("/api/agent/{agent}/upload", k_upload)
     app.router.add_post("/api/agent/{agent}/delete", k_delete)
     app.router.add_get("/kfiles/{agent}/{tail:.+}", kfile)
+    app.router.add_get("/api/agent/{agent}/skills", sk_list)
+    app.router.add_post("/api/agent/{agent}/skills", sk_save)
+    app.router.add_post("/api/agent/{agent}/skills-upload", sk_upload)
+    app.router.add_get("/api/agent/{agent}/skills/{slug}", sk_get)
+    app.router.add_put("/api/agent/{agent}/skills/{slug}", sk_save)
+    app.router.add_post("/api/agent/{agent}/skills/{slug}/toggle", sk_toggle)
+    app.router.add_delete("/api/agent/{agent}/skills/{slug}", sk_delete)
     return app
 
 

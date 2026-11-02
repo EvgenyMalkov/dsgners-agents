@@ -18,6 +18,7 @@
   --bg:#111215; --panel:#1B1D22; --line:#2C2F36; --fg:#F2F3F7; --muted:#9AA0AD;
   --accent:#7D9BFF; --ok:#5CCB7C; --warn:#E3A93A; --bad:#EF6B6B; color-scheme:dark}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 html,body{height:100%}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 var(--f-body);padding:16px}
 .wrap{max-width:1320px;margin:0 auto;display:flex;flex-direction:column;gap:14px}
@@ -85,6 +86,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible,.chip:focus-visi
 .js{font-size:11px;font-weight:700;padding:1px 7px;border-radius:999px;white-space:nowrap}
 .js-review{background:#FFE08A;color:#5A4300}.js-approved{background:color-mix(in srgb,var(--ok) 22%,transparent);color:var(--ok)}
 .js-redo{background:color-mix(in srgb,var(--accent) 18%,transparent);color:var(--accent)}.js-running,.js-queued{background:color-mix(in srgb,var(--accent) 12%,transparent);color:var(--accent)}
+.js-sub{background:var(--line);color:var(--muted)}
 .js-error,.js-empty{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad)}
 .empty{padding:24px 16px;color:var(--muted);font-size:13px}
 
@@ -132,7 +134,26 @@ dialog::backdrop{background:#0009}
 .imgs{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
 .imgs a{display:block;border-radius:8px;overflow:hidden;background:var(--line)}
 .imgs img{width:100%;display:block}
-.cap{white-space:pre-wrap;font-size:14px;background:var(--bg);border-radius:10px;padding:10px 12px;margin:0}
+.cap{white-space:pre-wrap;font-size:14px;background:var(--bg);border-radius:10px;padding:10px 12px;margin:0;overflow-wrap:anywhere}
+pre.cap{font:13px/1.5 var(--f-mono);max-height:50vh;overflow:auto}
+.docv{border:1px solid var(--line);border-radius:10px}.docv summary{cursor:pointer;padding:10px 12px;font-weight:600;font-size:14px}
+.docv pre{margin:0 10px 10px}
+.post{display:flex;flex-direction:column;gap:6px}.ph2{font-size:13px;color:var(--muted)}
+.skl{display:flex;flex-direction:column;gap:8px}
+.ski{border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.ski.off{opacity:.55}
+.ski .top{display:flex;gap:8px;align-items:center;justify-content:space-between}
+.ski .nm{font-weight:700;font-size:14px;min-width:0;overflow-wrap:anywhere}
+.ski .ds{font-size:13px;color:var(--muted);overflow-wrap:anywhere}
+.ski .bt{display:flex;gap:6px;flex-wrap:wrap}
+.sw2{position:relative;width:38px;height:22px;flex:none}
+.sw2 input{opacity:0;width:100%;height:100%;margin:0;cursor:pointer;position:absolute;inset:0;z-index:1}
+.sw2 span{position:absolute;inset:0;border-radius:999px;background:var(--line);transition:.15s}
+.sw2 span::after{content:"";position:absolute;left:3px;top:3px;width:16px;height:16px;border-radius:50%;background:#fff;transition:.15s}
+.sw2 input:checked+span{background:var(--ok)}.sw2 input:checked+span::after{left:19px}
+.ed{display:flex;flex-direction:column;gap:8px}
+.ed input,.ed textarea{font:inherit;font-size:14px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--panel);color:var(--fg);width:100%}
+.ed textarea{font:13px/1.5 var(--f-mono);min-height:260px;resize:vertical}
 .df{display:flex;flex-wrap:wrap;gap:8px;padding:12px 18px;border-top:1px solid var(--line);align-items:center}
 .df textarea{flex:1 1 260px;min-width:0;font:inherit;font-size:14px;padding:8px 10px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--fg);height:40px;resize:vertical}
 .toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--fg);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;font-weight:600;opacity:0;transition:opacity .2s;pointer-events:none;z-index:9}
@@ -169,10 +190,12 @@ dialog::backdrop{background:#0009}
         <button class="tab" role="tab" data-tab="feed" aria-selected="true">Лента</button>
         <button class="tab" role="tab" data-tab="history" aria-selected="false">История <span class="cnt" id="histCnt" hidden></span></button>
         <button class="tab" role="tab" data-tab="know" aria-selected="false" id="knowTab">Знания</button>
+        <button class="tab" role="tab" data-tab="skills" aria-selected="false" id="skillsTab">Навыки</button>
       </div>
       <div class="panel" id="pFeed"><ul class="log" id="log"></ul></div>
       <div class="panel" id="pHistory" hidden><div class="jobs" id="jobs"></div></div>
       <div class="panel" id="pKnow" hidden><div class="kn" id="kn"></div></div>
+      <div class="panel" id="pSkills" hidden><div class="kn" id="sk"></div></div>
       <form class="ask" id="askForm" hidden>
         <textarea id="askInput" rows="1" aria-label="Задача агенту" placeholder="Задача…"></textarea>
         <button>Дать</button>
@@ -196,7 +219,9 @@ const TEAM = [
   {id:'seo',         title:'SEO-шник', desk:[196,104]},
 ];
 const ST_RU = {idle:'свободен', thinking:'думает', working:'работает', waiting:'ждёт тебя', error:'ошибка', soon:'скоро'};
-const JS_RU = {queued:'в очереди', running:'в работе', review:'на согласовании', approved:'принято', redo:'переделано', error:'ошибка', empty:'пусто'};
+const JS_RU = {queued:'в очереди', running:'в работе', review:'на согласовании', approved:'принято', redo:'переделано', error:'ошибка', empty:'пусто', sub:'для коллеги'};
+const IMG_RE = /\.(png|jpe?g|webp)$/i;
+const isImg = f => IMG_RE.test(f);
 const css = getComputedStyle(document.documentElement);
 const color = id => css.getPropertyValue('--c-' + id).trim() || '#888';
 const $ = id => document.getElementById(id);
@@ -436,7 +461,7 @@ function renderJobs(){
   if (!list.length){ el.innerHTML = '<div class="empty">Задач ещё не было.</div>'; return; }
   el.innerHTML = list.map(j => `
     <button class="jc" type="button" data-job="${j.id}">
-      ${j.files[0] ? `<img src="/files/${encodeURI(j.files[0])}" alt="" loading="lazy">` : '<span class="ph"></span>'}
+      ${j.files.find(isImg) ? `<img src="/files/${encodeURI(j.files.find(isImg))}" alt="" loading="lazy">` : `<span class="ph" style="display:grid;place-items:center;font-size:20px">${j.files.length ? '📄' : ''}</span>`}
       <span style="min-width:0">
         <div class="tt">${esc(j.task)}</div>
         <div class="mm"><span class="js js-${j.status}">${JS_RU[j.status] || j.status}</span>
@@ -451,15 +476,22 @@ $('jobs').addEventListener('click', ev => { const b = ev.target.closest('[data-j
 async function openJob(id){
   let j;
   try { j = await api('/api/jobs/' + id); } catch (e) { toast(e.message); return; }
-  const parent = j.parent ? `<button class="linkbtn" data-open="${j.parent}">← предыдущий вариант</button>` : '';
-  const kids = (j.children || []).map(c => `<button class="linkbtn" data-open="${c}">→ переделанный вариант</button>`).join(' ');
+  const fromAgent = (j.source || '').startsWith('agent:');
+  const parent = j.parent ? `<button class="linkbtn" data-open="${j.parent}">${fromAgent ? '← задача, для которой это сделано' : '← предыдущий вариант'}</button>` : '';
+  const kids = (j.children || []).map(c => `<button class="linkbtn" data-open="${c.id}">${(c.source || '').startsWith('agent:')
+    ? '→ работа коллеги: ' + esc(A[c.agent]?.title || c.agent) : '→ переделанный вариант'}</button>`).join(' ');
   $('dlgBody').innerHTML = `
     <div class="dh"><div><div class="mm" style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--muted);margin-bottom:4px">
       <span class="js js-${j.status}">${JS_RU[j.status] || j.status}</span><span>${A[j.agent]?.title || j.agent}</span><span>${fmtD(j.created)}</span>
       ${j.cost ? `<span>$${j.cost.toFixed(3)}</span>` : ''}</div><h2>${esc(j.task)}</h2></div>
       <button class="btn" data-close>✕</button></div>
     <div class="db">
-      ${j.files.length ? `<div class="imgs">${j.files.map(f => `<a href="/files/${encodeURI(f)}" target="_blank" rel="noopener"><img src="/files/${encodeURI(f)}" alt=""></a>`).join('')}</div>` : ''}
+      ${j.files.some(isImg) ? `<div class="imgs">${j.files.filter(isImg).map(f => `<a href="/files/${encodeURI(f)}" target="_blank" rel="noopener"><img src="/files/${encodeURI(f)}" alt=""></a>`).join('')}</div>` : ''}
+      ${(j.meta?.posts || []).map((p, i) => `<div class="post"><div class="ph2">Пост ${i + 1} → <b>${esc(p.channel || 'черновик')}</b></div><p class="cap">${esc(p.text)}</p></div>`).join('')}
+      ${j.meta?.published ? `<p class="cap"><b>Публикация:</b>\n${esc(j.meta.published.join('\n'))}</p>` : ''}
+      ${j.files.filter(f => !isImg(f) && !/posts\.md$/.test(f)).map(f => /\.html?$/i.test(f)
+        ? `<a class="btn" href="/files/${encodeURI(f)}" target="_blank" rel="noopener" style="align-self:flex-start;text-decoration:none">🖥 Открыть ${esc(f.split('/').pop())}</a>`
+        : `<details class="docv" data-doc="${esc(f)}"><summary>📄 ${esc(f.split('/').pop())}</summary><pre class="cap">загружаю…</pre></details>`).join('')}
       ${j.caption ? `<p class="cap">${esc(j.caption)}</p>` : ''}
       ${j.reason ? `<p class="cap"><b>Твоя правка:</b> ${esc(j.reason)}</p>` : ''}
       ${parent || kids ? `<div style="display:flex;gap:14px;flex-wrap:wrap">${parent}${kids}</div>` : ''}
@@ -472,6 +504,13 @@ async function openJob(id){
   const dlg = $('dlg'); if (!dlg.open) dlg.showModal();
   dlg.querySelector('[data-close]').onclick = () => dlg.close();
   dlg.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openJob(b.dataset.open));
+  dlg.querySelectorAll('details[data-doc]').forEach((d, i) => {
+    const load = async () => { if (d.dataset.loaded) return; d.dataset.loaded = 1;
+      try { const r = await fetch('/files/' + encodeURI(d.dataset.doc)); d.querySelector('pre').textContent = await r.text(); }
+      catch { d.querySelector('pre').textContent = 'Не удалось загрузить'; } };
+    d.addEventListener('toggle', () => d.open && load());
+    if (i === 0 && !j.files.some(isImg)) { d.open = true; load(); }
+  });
   const ok = $('okBtn'); if (ok) ok.onclick = async () => {
     ok.disabled = true;
     try { await api(`/api/jobs/${id}/approve`, {method:'POST'}); toast('Принято 👍'); dlg.close(); } catch (e) { toast(e.message); ok.disabled = false; } };
@@ -538,12 +577,79 @@ $('kn').addEventListener('change', async ev => {
   } catch (e) { toast(e.message); }
 });
 
+// ---------- навыки ----------
+let skList = [];
+async function loadSkills(){
+  if (!selected) return;
+  $('sk').innerHTML = '<p class="hint">Загружаю…</p>';
+  try { skList = await api(`/api/agent/${selected}/skills`); renderSkills(); } catch (e) { $('sk').innerHTML = `<p class="hint">${esc(e.message)}</p>`; }
+}
+function renderSkills(){
+  $('sk').innerHTML = `
+    <p class="hint">Навык — инструкция под конкретный тип задач. Агент всегда видит список с описаниями и открывает
+      полный текст только когда задача подходит, поэтому навыков может быть много. Формат — как SKILL.md у Claude.</p>
+    <div class="up"><button class="btn pri" type="button" data-new>+ Новый навык</button>
+      <label class="btn">Загрузить SKILL.md / .zip<input type="file" accept=".md,.zip" data-skup hidden multiple></label></div>
+    <div class="skl">${skList.length ? skList.map(s => `
+      <div class="ski ${s.enabled ? '' : 'off'}" data-slug="${esc(s.slug)}">
+        <div class="top"><span class="nm">${esc(s.name)}</span>
+          <label class="sw2" title="${s.enabled ? 'Выключить' : 'Включить'}"><input type="checkbox" data-tog ${s.enabled ? 'checked' : ''}><span></span></label></div>
+        <div class="ds">${esc(s.description || 'Без описания — агент не поймёт, когда его брать. Добавь описание.')}</div>
+        <div class="mm" style="display:flex;gap:8px;flex-wrap:wrap;font-size:12px;color:var(--muted)">
+          <span class="src ${s.source}">${s.source === 'office' ? (s.has_repo ? 'изменён здесь' : 'добавлен здесь') : 'исходный'}</span>
+          <span>код: ${esc(s.slug)}</span>${s.files.length ? `<span>+ файлы: ${esc(s.files.join(', '))}</span>` : ''}</div>
+        <div class="bt"><button class="btn" data-edit>Открыть</button>
+          ${s.source === 'office' ? `<button class="btn" data-del>${s.has_repo ? 'Вернуть исходный' : 'Удалить'}</button>` : ''}</div>
+      </div>`).join('') : '<p class="hint">Навыков пока нет.</p>'}</div>`;
+}
+async function openSkill(slug){
+  let d = {slug: 'new', name: '', description: '', body: ''};
+  if (slug){ try { d = await api(`/api/agent/${selected}/skills/${slug}`); } catch (e) { toast(e.message); return; } }
+  $('sk').innerHTML = `<div class="ed">
+    <button class="linkbtn" data-back>← все навыки</button>
+    <label class="hint">Название</label><input data-f="name" value="${esc(d.name)}" placeholder="Например: Анонс вебинара">
+    <label class="hint">Когда использовать — по этому описанию агент решает, брать ли навык</label>
+    <input data-f="description" value="${esc(d.description)}" placeholder="Когда просят анонс вебинара или лекции: пост + сторис…">
+    <label class="hint">Инструкция (Markdown): шаги, правила, примеры</label>
+    <textarea data-f="body" spellcheck="true">${esc(d.body)}</textarea>
+    <div class="acts" style="border:0;padding:0"><button class="btn" data-back>Отмена</button><button class="btn pri" data-save="${esc(d.slug)}">Сохранить</button></div>
+  </div>`;
+}
+$('sk').addEventListener('click', async ev => {
+  const t = ev.target, item = t.closest('[data-slug]'), slug = item?.dataset.slug;
+  if (t.matches('[data-new]')) return openSkill(null);
+  if (t.matches('[data-back]')) return renderSkills();
+  if (t.matches('[data-edit]')) return openSkill(slug);
+  if (t.matches('[data-del]') && confirm('Удалить эту версию навыка?')){
+    try { skList = await api(`/api/agent/${selected}/skills/${slug}`, {method:'DELETE'}); renderSkills(); } catch (e) { toast(e.message); } }
+  if (t.matches('[data-save]')){
+    const f = k => $('sk').querySelector(`[data-f="${k}"]`).value;
+    const s = t.dataset.save;
+    try { const r = await api(`/api/agent/${selected}/skills${s === 'new' ? '' : '/' + s}`, {method: s === 'new' ? 'POST' : 'PUT',
+        headers:{'Content-Type':'application/json'}, body: JSON.stringify({name: f('name'), description: f('description'), body: f('body')})});
+      skList = r.skills; renderSkills(); toast('Навык сохранён'); } catch (e) { toast(e.message); }
+  }
+});
+$('sk').addEventListener('change', async ev => {
+  const t = ev.target;
+  if (t.matches('[data-tog]')){
+    const slug = t.closest('[data-slug]').dataset.slug;
+    try { skList = await api(`/api/agent/${selected}/skills/${slug}/toggle`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({enabled: t.checked})}); renderSkills(); }
+    catch (e) { toast(e.message); }
+  }
+  if (t.matches('[data-skup]') && t.files.length){
+    try { for (const f of t.files){ const fd = new FormData(); fd.append('file', f);
+        const r = await api(`/api/agent/${selected}/skills-upload`, {method:'POST', body: fd}); skList = r.skills; }
+      renderSkills(); toast('Навык загружен'); } catch (e) { toast(e.message); }
+  }
+});
+
 // ---------- боковая панель ----------
 function setTab(t){
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
-  $('pFeed').hidden = t !== 'feed'; $('pHistory').hidden = t !== 'history'; $('pKnow').hidden = t !== 'know';
-  if (t === 'feed') renderLog(); if (t === 'history') renderJobs(); if (t === 'know') loadKnow();
+  $('pFeed').hidden = t !== 'feed'; $('pHistory').hidden = t !== 'history'; $('pKnow').hidden = t !== 'know'; $('pSkills').hidden = t !== 'skills';
+  if (t === 'feed') renderLog(); if (t === 'history') renderJobs(); if (t === 'know') loadKnow(); if (t === 'skills') loadSkills();
 }
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => setTab(b.dataset.tab));
 function renderSide(){
@@ -554,7 +660,7 @@ function renderSide(){
   if (a){ const st = stOf(a); stEl.className = 'status st-' + st; stEl.textContent = ST_RU[st]; }
   $('selTask').textContent = a ? (a.inactive ? 'Этот агент ещё в разработке.' : a.task || 'Без задачи') : 'Лента и история всех агентов. Нажми на робота, чтобы открыть его.';
   $('allBtn').hidden = !a;
-  $('knowTab').hidden = !a;
+  $('knowTab').hidden = !a; $('skillsTab').hidden = !a;
   $('askForm').hidden = !a || a.inactive;
   $('askInput').placeholder = 'Опиши задачу…';
 }
@@ -562,7 +668,7 @@ function select(id){
   selected = id;
   TEAM.forEach(t => A[t.id].chip.setAttribute('aria-pressed', String(t.id === id)));
   renderSide();
-  if (!id && tab === 'know') setTab('feed'); else setTab(tab);
+  if (!id && (tab === 'know' || tab === 'skills')) setTab('feed'); else setTab(tab);
 }
 $('allBtn').onclick = () => select(null);
 $('pendPill').onclick = () => { setTab('history'); };
@@ -580,7 +686,7 @@ $('askForm').addEventListener('submit', async ev => {
   ev.preventDefault();
   const text = askIn.value.trim(); if (!text || !selected) return;
   try { await api(`/api/agent/${selected}/ask`, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({text})});
-    askIn.value = ''; askIn.style.height = '42px'; toast('Задача отправлена'); if (tab === 'know') setTab('feed'); }
+    askIn.value = ''; askIn.style.height = '42px'; toast('Задача отправлена'); if (tab === 'know' || tab === 'skills') setTab('feed'); }
   catch (e) { toast(e.message); }
 });
 

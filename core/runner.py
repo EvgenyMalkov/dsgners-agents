@@ -9,11 +9,16 @@ from core.agent import run_agent
 from core.office import AGENTS, office
 
 _locks = {a: asyncio.Lock() for a in AGENTS}
-_listeners: list = []  # async callable(job) — вызывается, когда задача готова к согласованию
+_listeners: list = []   # async callable(job) — задача готова к согласованию
+_approvers: list = []   # async callable(job) — задача принята (например, SMM публикует посты)
 
 
 def on_review(cb):
     _listeners.append(cb)
+
+
+def on_approved(cb):
+    _approvers.append(cb)
 
 
 def _short(s: str, n=70) -> str:
@@ -31,36 +36,57 @@ def start_job(agent: str, task: str, source: str, parent: str | None = None, ful
     return jid
 
 
-async def _run(jid: str, agent: str):
+async def _execute(jid: str, agent: str, internal_for: str | None = None) -> list:
+    """Выполнить задачу под замком агента. Возвращает список файлов."""
     async with _locks[agent]:
         job = office.get_job(jid)
         task = office.full_task(jid)
         office.update_job(jid, status="running")
         office.set_status(agent, "thinking", _short(job["task"], 40))
-        office.emit(agent, "info", f"Взял задачу: {_short(job['task'])}", jid)
+        who = f" (просит {AGENTS[internal_for]['title']})" if internal_for else ""
+        office.emit(agent, "info", f"Взял задачу{who}: {_short(job['task'])}", jid)
 
         async def progress(txt: str):
             office.set_status(agent, "working", _short(txt, 40))
             office.emit(agent, "tool", txt, jid)
 
         try:
-            res = await run_agent(agent, task, progress=progress)
+            res = await run_agent(agent, task, progress=progress, job_id=jid)
         except Exception as e:
             logging.exception("agent failed")
             office.update_job(jid, status="error", caption=str(e), finished=time.time())
             office.emit(agent, "error", f"Ошибка: {e}", jid)
             office.set_status(agent, "idle")
-            return
+            return []
 
         files = [str(p.relative_to(config.OUTBOX)) for p in res["files"]]
-        status = "review" if files else "empty"
-        office.update_job(jid, status=status, files=files, caption=res["text"], cost=res["cost"], finished=time.time())
-        if files:
-            office.emit(agent, "approval", f"Жду подтверждения: {_short(job['task'])}", jid)
+        if internal_for:
+            status = "sub" if files else "empty"
         else:
+            status = "review" if files else "empty"
+        office.update_job(jid, status=status, files=files, caption=res["text"], cost=res["cost"],
+                          meta=res.get("meta") or {}, finished=time.time())
+        if not files:
             office.emit(agent, "error", "Ничего не сдал: " + _short(res["text"], 120), jid)
+        elif internal_for:
+            office.emit(agent, "done", f"Передал коллеге ({AGENTS[internal_for]['title']}): {_short(job['task'])}", jid)
+        else:
+            office.emit(agent, "approval", f"Жду подтверждения: {_short(job['task'])}", jid)
         office.set_status(agent, "idle")
+        return files
 
+
+async def run_internal(agent: str, task: str, parent: str | None, requester: str) -> dict:
+    """Задача от одного агента другому: выполняется сразу, без согласования, результат возвращается агенту."""
+    if agent not in AGENTS or not AGENTS[agent]["active"]:
+        return {"status": "error", "caption": f"Коллега {agent} сейчас не работает", "files": []}
+    jid = office.create_job(agent, task, task, f"agent:{requester}", parent)
+    await _execute(jid, agent, internal_for=requester)
+    return office.get_job(jid)
+
+
+async def _run(jid: str, agent: str):
+    files = await _execute(jid, agent)
     if files:
         for cb in _listeners:
             try:
@@ -83,7 +109,18 @@ def approve(jid: str) -> dict:
             shutil.copy(src, approved / f.replace("/", "-"))
     office.update_job(jid, status="approved")
     office.emit(job["agent"], "done", f"Принято: {_short(job['task'])}", jid)
-    return office.get_job(jid)
+    job = office.get_job(jid)
+    for cb in _approvers:
+        asyncio.create_task(_safe(cb, job))
+    return job
+
+
+async def _safe(cb, job):
+    try:
+        await cb(job)
+    except Exception as e:
+        logging.exception("approve hook failed")
+        office.emit(job["agent"], "error", f"После принятия: {e}", job["id"])
 
 
 def redo(jid: str, reason: str, source: str) -> str:

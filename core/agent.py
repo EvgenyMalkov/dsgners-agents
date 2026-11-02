@@ -6,6 +6,7 @@
   feedback.md   — утверждённые правила (в git)
 Тексты можно переопределить из офиса (data/agents/<имя>/), документы и референсы — core/knowledge.py.
   tools.py      — TOOLS (описания для модели) и async handle(name, input, ctx)
+  skills/       — навыки (SKILL.md), см. core/skills.py
 Плюс общий мозг team/*.md и живые правила data/feedback/<имя>.md (пополняются из Telegram).
 """
 import base64
@@ -19,7 +20,7 @@ from pathlib import Path
 import anthropic
 from PIL import Image
 
-from core import config, knowledge, spend
+from core import config, knowledge, skills, spend
 
 
 @dataclass
@@ -30,6 +31,8 @@ class Ctx:
     caption: str = ""
     done: bool = False
     progress: object = None  # async callable(str) — статус для бота/офиса
+    job_id: str | None = None
+    meta: dict = field(default_factory=dict)  # доп. данные результата (посты SMM и т.п.)
 
 
 def _read(p: Path) -> str:
@@ -47,6 +50,7 @@ def build_system(agent: str, extra: str = "") -> str:
         "# Правила из прошлых правок владельца (соблюдай строго)\n"
         + kn.load_text(agent, "feedback.md") + "\n" + kn.load_text(agent, "live-rules.md"),
         ("# Справочные документы\n" + docs) if docs else "",
+        skills.system_section(agent),
         extra,
     ]
     return "\n\n".join(p.strip() for p in parts if p.strip())
@@ -93,17 +97,28 @@ def _prune_old_images(messages: list) -> None:
                                    for c in part["content"]]
 
 
-async def run_agent(agent: str, task: str, progress=None) -> dict:
+async def _use_skill(inp: dict, ctx: Ctx):
+    slug = (inp.get("skill") or "").strip().strip("`")
+    text = skills.skill_text(ctx.agent, slug)
+    if ctx.progress:
+        await ctx.progress(f"взял навык «{slug}»")
+    return [{"type": "text", "text": f"# Навык {slug}\n{text}"}]
+
+
+async def run_agent(agent: str, task: str, progress=None, job_id: str | None = None) -> dict:
     if spend.this_month() >= config.MONTHLY_LIMIT_USD:
         raise RuntimeError(f"Достигнут месячный лимит ${config.MONTHLY_LIMIT_USD:.0f} — подними MONTHLY_LIMIT_USD в .env")
 
     tools_mod = importlib.import_module(f"agents.{agent}.tools")
     stamp = dt.datetime.now().strftime("%Y%m%d-%H%M%S")
-    ctx = Ctx(agent=agent, job_dir=config.OUTBOX / f"{stamp}-{agent}", progress=progress)
+    ctx = Ctx(agent=agent, job_dir=config.OUTBOX / f"{stamp}-{agent}-{(job_id or 'x')[:6]}", progress=progress, job_id=job_id)
     ctx.job_dir.mkdir(parents=True, exist_ok=True)
 
     extra = getattr(tools_mod, "system_extra", lambda: "")()
     system = [{"type": "text", "text": build_system(agent, extra), "cache_control": {"type": "ephemeral"}}]
+    tools = list(tools_mod.TOOLS)
+    if skills.list_skills(agent, enabled_only=True):
+        tools.append(skills.USE_SKILL_TOOL)
     client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
     messages: list = [{"role": "user", "content": first_message(agent, task)}]
     cost = 0.0
@@ -112,12 +127,14 @@ async def run_agent(agent: str, task: str, progress=None) -> dict:
     for _ in range(config.MAX_STEPS):
         _prune_old_images(messages)
         resp = await client.messages.create(
-            model=config.MODEL, max_tokens=4096, system=system, tools=tools_mod.TOOLS, messages=messages,
+            model=config.MODEL, max_tokens=8192, system=system, tools=tools, messages=messages,
         )
         cost += spend.record(agent, resp.usage)
         messages.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})
         final_text = "\n".join(b.text for b in resp.content if b.type == "text").strip() or final_text
 
+        if resp.stop_reason == "pause_turn":
+            continue
         if resp.stop_reason != "tool_use":
             break
         results = []
@@ -125,7 +142,10 @@ async def run_agent(agent: str, task: str, progress=None) -> dict:
             if b.type != "tool_use":
                 continue
             try:
-                out = await tools_mod.handle(b.name, b.input, ctx)
+                if b.name == "use_skill":
+                    out = await _use_skill(b.input, ctx)
+                else:
+                    out = await tools_mod.handle(b.name, b.input, ctx)
             except Exception as e:  # ошибку инструмента отдаём модели, пусть исправится
                 out = [{"type": "text", "text": f"Ошибка инструмента: {e}"}]
             results.append({"type": "tool_result", "tool_use_id": b.id, "content": out})
@@ -134,4 +154,4 @@ async def run_agent(agent: str, task: str, progress=None) -> dict:
             break
 
     (ctx.job_dir / "task.md").write_text(task, "utf-8")
-    return {"files": ctx.files, "text": ctx.caption or final_text, "cost": cost, "dir": ctx.job_dir}
+    return {"files": ctx.files, "text": ctx.caption or final_text, "cost": cost, "dir": ctx.job_dir, "meta": ctx.meta}

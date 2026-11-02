@@ -130,3 +130,56 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
         finally:
             await browser.close()
     return issues
+
+
+MOCKUP_CHECK_JS = r"""
+async () => {
+  await document.fonts.ready;
+  const issues = [];
+  const vw = document.documentElement.clientWidth;
+  if (document.documentElement.scrollWidth > vw + 1)
+    issues.push(`Горизонтальная прокрутка: ширина контента ${document.documentElement.scrollWidth}px при экране ${vw}px.`);
+  let n = 0;
+  for (const el of document.body.querySelectorAll('*')) {
+    const cs = getComputedStyle(el);
+    if (!el.children.length && el.innerText && el.innerText.trim() && (el.scrollWidth > el.clientWidth + 2) &&
+        cs.overflow !== 'visible' && cs.textOverflow !== 'ellipsis') {
+      if (n++ < 5) issues.push('Текст не помещается в блок: «' + el.innerText.trim().slice(0, 40) + '»');
+    }
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && (r.right > vw + 1) && cs.position !== 'fixed' && n < 5 && el.innerText && el.innerText.trim() && !el.children.length) {
+      n++; issues.push('Элемент вылезает за правый край: «' + el.innerText.trim().slice(0, 40) + '»');
+    }
+  }
+  for (const img of document.images)
+    if (!img.complete || img.naturalWidth === 0) issues.push('Картинка не загрузилась: ' + (img.getAttribute('src') || '').slice(0, 80));
+  return issues;
+}
+"""
+
+
+async def render_html(html: str, out_png: Path, width: int = 1440, max_height: int = 6000) -> tuple[list[str], Path]:
+    """Произвольный HTML (макет) → скриншот всей страницы. Возвращает (проблемы, путь к первому экрану)."""
+    out_png = out_png.resolve()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    html_path = out_png.with_suffix(".html")
+    html_path.write_text(html, "utf-8")
+    first = out_png.with_name(out_png.stem + "-screen.jpg")
+    errors: list[str] = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch()
+        try:
+            page = await browser.new_page(viewport={"width": width, "height": 900 if width > 600 else 844},
+                                          device_scale_factor=1)
+            page.on("pageerror", lambda e: errors.append(f"Ошибка JS: {str(e)[:120]}"))
+            await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=30000)
+            issues = await page.evaluate(MOCKUP_CHECK_JS)
+            h = await page.evaluate("document.documentElement.scrollHeight")
+            await page.screenshot(path=str(first), type="jpeg", quality=85)
+            await page.set_viewport_size({"width": width, "height": min(max(h, 400), max_height)})
+            await page.screenshot(path=str(out_png), full_page=False)
+            if h > max_height:
+                issues.append(f"Страница выше {max_height}px — показан только верх.")
+        finally:
+            await browser.close()
+    return issues + errors[:3], first

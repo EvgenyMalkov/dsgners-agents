@@ -22,16 +22,33 @@ dp = Dispatcher()
 WAIT_REASON: dict[int, str] = {}  # user_id -> job_id, ждём причину переделки
 BOT: Bot | None = None
 
+ROUTES = {"design": "designer", "d": "designer", "web": "webdesigner", "w": "webdesigner",
+          "smm": "smm", "s": "smm", "seo": "seo"}
+ICON = {"designer": "🎨", "webdesigner": "🖥", "smm": "📣", "seo": "🔎"}
+
 HELP = (
     "Команда dsgners на связи.\n\n"
-    "Напиши задачу — её возьмёт графический дизайнер. Например:\n"
-    "«Обложка для поста: как мы переделали онбординг, конверсия +34%. Телега и сторис»\n\n"
-    "Можно прислать картинку (работу автора) с подписью-задачей.\n\n"
+    "Просто текст — задача графическому дизайнеру. Другим агентам — с командой:\n"
+    "/web задача — веб-дизайнер (макеты блоков и страниц сайта)\n"
+    "/smm задача — SMM-щик (посты в Telegram; публикует только после твоего «Ок»)\n"
+    "/seo задача — SEO-шник (аудит, мета-теги, тексты, ТЗ)\n\n"
+    "Картинку можно прислать с подписью-задачей (тоже с командой, если не дизайнеру).\n\n"
     "/office — ссылка на ИИ-офис\n"
-    "/rules — правила, которые графический дизайнер выучил из твоих правок\n"
+    "/rules [smm|web|seo] — правила, выученные из твоих правок\n"
     "/spend — расходы на API за месяц\n"
     "/rollback — вернуть предыдущую версию системы"
 )
+
+
+def route(text: str) -> tuple[str, str]:
+    """«/smm пост про…» → ("smm", "пост про…"). Без команды — дизайнеру."""
+    t = (text or "").strip()
+    if t.startswith("/"):
+        head, _, rest = t.partition(" ")
+        cmd = head[1:].split("@")[0].lower()
+        if cmd in ROUTES:
+            return ROUTES[cmd], rest.strip()
+    return "designer", t
 
 
 def is_owner(m) -> bool:
@@ -80,7 +97,9 @@ async def rollback(m: Message):
 async def rules(m: Message):
     if not is_owner(m):
         return
-    txt = feedback.read("designer").strip() or "Пока пусто — правила появятся после первой «Переделать»."
+    arg = (m.text or "").partition(" ")[2].strip().lower()
+    agent = ROUTES.get(arg, "designer")
+    txt = feedback.read(agent).strip() or "Пока пусто — правила появятся после первой «Переделать»."
     await m.answer(txt[-3800:])
 
 
@@ -103,9 +122,21 @@ async def with_image(m: Message, bot: Bot):
     ext = ".jpg" if m.photo else ("." + (m.document.file_name or "x.png").rsplit(".", 1)[-1])
     dest = config.DATA / "uploads" / f"{uuid.uuid4().hex[:10]}{ext}"
     await bot.download(file_id, destination=dest)
-    shown = m.caption or "Визуал с прикреплённой работой"
-    runner.start_job("designer", shown, source="telegram", full_task=f"{shown}\n\nПрикреплённая картинка: {dest}")
-    await m.answer("🎨 Графический дизайнер взял задачу. Пришлю результат сюда.")
+    agent, shown = route(m.caption or "")
+    shown = shown or "Визуал с прикреплённой работой"
+    await _start(m, agent, shown, f"{shown}\n\nПрикреплённая картинка: {dest}")
+
+
+async def _start(m: Message, agent: str, task: str, full: str | None = None):
+    if not task:
+        await m.answer("Напиши задачу после команды, например: /smm анонс статьи https://dsgners.ru/…")
+        return
+    try:
+        runner.start_job(agent, task, source="telegram", full_task=full)
+    except ValueError as e:
+        await m.answer(str(e))
+        return
+    await m.answer(f"{ICON.get(agent, '🤖')} {AGENTS[agent]['title']} взял задачу. Пришлю результат сюда.")
 
 
 @dp.message(F.text)
@@ -121,26 +152,68 @@ async def text_task(m: Message):
         except ValueError as e:
             await m.answer(f"Не вышло: {e}")
         return
-    runner.start_job("designer", m.text, source="telegram")
-    await m.answer("🎨 Графический дизайнер взял задачу. Пришлю результат сюда.")
+    agent, task = route(m.text)
+    await _start(m, agent, task)
+
+
+IMG = (".png", ".jpg", ".jpeg", ".webp")
 
 
 async def send_review(job: dict):
-    """Готовая работа → владельцам в Telegram."""
+    """Готовая работа → владельцам в Telegram: картинки альбомом, документы файлами, посты — превью."""
     if not BOT:
         return
-    files = [config.OUTBOX / f for f in job["files"]][:10]
-    title = AGENTS[job["agent"]]["title"]
+    files = [config.OUTBOX / f for f in job["files"]]
+    imgs = [f for f in files if f.suffix.lower() in IMG and f.exists()][:10]
+    docs = [f for f in files if f.suffix.lower() not in IMG and f.exists() and f.name != "posts.md"][:5]
+    posts = (job.get("meta") or {}).get("posts") or []
+    title = f"{ICON.get(job['agent'], '🤖')} {AGENTS[job['agent']]['title']}"
+    ok_text = "✅ Ок и опубликовать" if any(p.get("channel") for p in posts) else "✅ Ок"
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Ок", callback_data=f"ok:{job['id']}"),
+        InlineKeyboardButton(text=ok_text, callback_data=f"ok:{job['id']}"),
         InlineKeyboardButton(text="🔁 Переделать", callback_data=f"redo:{job['id']}"),
     ]])
     for uid in config.OWNER_IDS:
-        if len(files) == 1:
-            await BOT.send_photo(uid, FSInputFile(files[0]))
-        else:
-            await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in files])
+        if len(imgs) == 1:
+            await BOT.send_photo(uid, FSInputFile(imgs[0]))
+        elif imgs:
+            await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in imgs])
+        for d in docs:
+            await BOT.send_document(uid, FSInputFile(d))
+        for i, p in enumerate(posts, 1):
+            await BOT.send_message(uid, f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n{p['text'][:3900]}")
         await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}", reply_markup=kb)
+
+
+async def publish_posts(job: dict):
+    """После «Ок»: SMM-посты уходят в каналы. Бот должен быть админом канала."""
+    posts = (job.get("meta") or {}).get("posts") or []
+    if not BOT or not posts:
+        return
+    from core.office import office
+    results = []
+    for p in posts:
+        ch = (p.get("channel") or "").strip()
+        if not ch:
+            results.append("черновик — не публиковал")
+            continue
+        try:
+            img = p.get("image")
+            if img and len(p["text"]) <= 1024:
+                await BOT.send_photo(ch, FSInputFile(img), caption=p["text"])
+            else:
+                if img:
+                    await BOT.send_photo(ch, FSInputFile(img))
+                await BOT.send_message(ch, p["text"])
+            results.append(f"{ch}: опубликовано")
+            office.emit(job["agent"], "done", f"Опубликовано в {ch}", job["id"])
+        except Exception as e:
+            results.append(f"{ch}: ошибка — {e}")
+            office.emit(job["agent"], "error", f"Не опубликовал в {ch}: {e}", job["id"])
+    meta = dict(job.get("meta") or {}, published=results)
+    office.update_job(job["id"], meta=meta)
+    for uid in config.OWNER_IDS:
+        await BOT.send_message(uid, "Публикация:\n" + "\n".join(results))
 
 
 @dp.callback_query(F.data.startswith("ok:"))
@@ -157,7 +230,8 @@ async def approve(c: CallbackQuery):
         await c.answer("Эта задача уже не на согласовании")
         return
     for f in job["files"]:
-        await c.message.answer_document(FSInputFile(config.OUTBOX / f), caption="Исходник без сжатия")
+        if f.lower().endswith(IMG):
+            await c.message.answer_document(FSInputFile(config.OUTBOX / f), caption="Исходник без сжатия")
     await c.answer("Принято 👍")
 
 
@@ -167,7 +241,7 @@ async def redo(c: CallbackQuery):
         return
     WAIT_REASON[c.from_user.id] = c.data.split(":", 1)[1]
     await c.message.edit_reply_markup(reply_markup=None)
-    await c.message.answer("Что не так? Напиши одним сообщением — это станет правилом, и дизайнер переделает.")
+    await c.message.answer("Что не так? Напиши одним сообщением — это станет правилом, и агент переделает.")
     await c.answer()
 
 
@@ -180,6 +254,7 @@ async def main():
         await asyncio.Event().wait()
     BOT = Bot(config.TELEGRAM_BOT_TOKEN)
     runner.on_review(send_review)
+    runner.on_approved(publish_posts)
     await dp.start_polling(BOT)
 
 

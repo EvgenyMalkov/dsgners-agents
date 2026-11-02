@@ -1,0 +1,71 @@
+"""Инструменты SMM-щика: черновики постов для Telegram-каналов, визуалы через дизайнера, чтение статей.
+Публикация происходит ТОЛЬКО после «✅ Ок» владельца (см. bot.py → publish_posts)."""
+import json
+from pathlib import Path
+
+from core import common_tools as ct
+from core import config
+from core.agent import Ctx
+
+TG_CAPTION_LIMIT = 1024
+TG_TEXT_LIMIT = 4096
+
+TOOLS = [
+    {
+        "name": "draft_post",
+        "description": "Добавить пост в пакет на согласование. После «Ок» владельца он уйдёт в указанный канал. "
+                       "Текст — обычный, без Markdown-разметки (звёздочки и решётки не нужны), эмодзи — умеренно. "
+                       "Канал бери только из знаний (список каналов); если канала нет — оставь пустым, пост останется черновиком.",
+        "input_schema": {"type": "object", "properties": {
+            "channel": {"type": "string", "description": "@username канала или его числовой id; пусто — черновик"},
+            "text": {"type": "string"},
+            "image": {"type": "string", "description": "имя файла картинки от коллеги (как он его назвал) или путь к присланной картинке; необязательно"},
+        }, "required": ["text"]},
+    },
+    ct.ask_colleague_tool({"designer": "графический дизайнер: визуал к посту (обложка, сторис, квадрат) по шаблонам бренда"}),
+    ct.READ_PAGE,
+    ct.SAVE_DOCUMENT,
+    ct.FINISH,
+]
+
+
+def _resolve_image(value: str) -> str | None:
+    if not value:
+        return None
+    for base in (config.OUTBOX, config.ROOT):
+        p = (base / value).resolve()
+        if p.exists() and p.is_file():
+            return str(p)
+    p = Path(value)
+    return str(p) if p.is_absolute() and p.exists() else None
+
+
+async def handle(name: str, inp: dict, ctx: Ctx):
+    if name == "draft_post":
+        text = inp["text"].strip()
+        img = _resolve_image(inp.get("image", ""))
+        if inp.get("image") and not img:
+            return [{"type": "text", "text": f"Картинка «{inp['image']}» не найдена. Используй имя файла из ответа коллеги."}]
+        limit = TG_CAPTION_LIMIT if img else TG_TEXT_LIMIT
+        warn = ""
+        if len(text) > TG_TEXT_LIMIT:
+            return [{"type": "text", "text": f"Текст {len(text)} симв. — больше лимита Telegram {TG_TEXT_LIMIT}. Сократи."}]
+        if img and len(text) > TG_CAPTION_LIMIT:
+            warn = " Текст длиннее подписи к фото (1024) — уйдёт отдельным сообщением после картинки."
+        posts = ctx.meta.setdefault("posts", [])
+        posts.append({"channel": inp.get("channel", "").strip(), "text": text, "image": img})
+        # читаемая версия для офиса
+        md = "\n\n---\n\n".join(
+            f"**Канал:** {p['channel'] or 'черновик (канал не указан)'}\n"
+            + (f"**Картинка:** {Path(p['image']).name}\n" if p["image"] else "") + f"\n{p['text']}" for p in posts)
+        (ctx.job_dir / "posts.md").write_text(md, "utf-8")
+        if img and str(Path(img)).startswith(str(config.OUTBOX)):
+            rel = str(Path(img).relative_to(config.OUTBOX))
+            if rel not in ctx.meta.setdefault("from_colleagues", []):
+                ctx.meta["from_colleagues"].append(rel)
+        if ctx.progress:
+            await ctx.progress(f"пост №{len(posts)} → {inp.get('channel') or 'черновик'}")
+        return [{"type": "text", "text": f"Пост №{len(posts)} добавлен ({len(text)} симв.).{warn}"}]
+    if name in ct.COMMON_HANDLERS:
+        return await ct.COMMON_HANDLERS[name](inp, ctx)
+    return [{"type": "text", "text": f"Нет инструмента {name}"}]

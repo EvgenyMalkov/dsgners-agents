@@ -9,9 +9,9 @@ from core import config
 
 AGENTS = {
     "designer": {"title": "Графический дизайнер", "active": True},
-    "webdesigner": {"title": "Веб-дизайнер", "active": False},
-    "smm": {"title": "SMM-щик", "active": False},
-    "seo": {"title": "SEO-шник", "active": False},
+    "webdesigner": {"title": "Веб-дизайнер", "active": True},
+    "smm": {"title": "SMM-щик", "active": True},
+    "seo": {"title": "SEO-шник", "active": True},
 }
 
 
@@ -25,6 +25,9 @@ class Office:
             files TEXT DEFAULT '[]', caption TEXT DEFAULT '', cost REAL DEFAULT 0, source TEXT, parent TEXT,
             reason TEXT DEFAULT '', created REAL, finished REAL);
         """)
+        cols = {r[1] for r in self.db.execute("PRAGMA table_info(jobs)")}
+        if "meta" not in cols:
+            self.db.execute("ALTER TABLE jobs ADD COLUMN meta TEXT DEFAULT '{}'")
         self.db.commit()
         # после перезапуска незавершённые задачи считаем прерванными
         self.db.execute("UPDATE jobs SET status='error', caption='Прервано перезапуском сервера' WHERE status IN ('queued','running')")
@@ -78,8 +81,9 @@ class Office:
         return jid
 
     def update_job(self, jid, **fields):
-        if "files" in fields:
-            fields["files"] = json.dumps(fields["files"], ensure_ascii=False)
+        for k in ("files", "meta"):
+            if k in fields:
+                fields[k] = json.dumps(fields[k], ensure_ascii=False)
         sets = ",".join(f"{k}=?" for k in fields)
         self.db.execute(f"UPDATE jobs SET {sets} WHERE id=?", (*fields.values(), jid))
         self.db.commit()
@@ -96,6 +100,7 @@ class Office:
             return None
         d = dict(r)
         d["files"] = json.loads(d["files"] or "[]")
+        d["meta"] = json.loads(d.get("meta") or "{}")
         d.pop("full_task", None)
         return d
 
