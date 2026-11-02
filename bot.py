@@ -1,11 +1,11 @@
-"""Telegram-бот команды: принимает задачи, показывает результат, кнопки «Ок / Переделать».
+"""Главный процесс: Telegram-бот + веб-сервер ИИ-офиса.
 
-Задача по умолчанию идёт дизайнеру. Позже: /smm ..., /seo ...
-Отвечает только владельцам из OWNER_IDS.
+Задачи из Telegram и из офиса идут через core.runner, история общая.
+Готовая работа приходит владельцам в Telegram с кнопками «Ок / Переделать»
+(их же можно нажать в офисе — что раньше, то и считается).
 """
 import asyncio
 import logging
-import shutil
 import uuid
 
 from aiogram import Bot, Dispatcher, F
@@ -13,20 +13,21 @@ from aiogram.filters import Command, CommandStart
 from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
                            InputMediaPhoto, Message)
 
-from core import config, feedback, spend
-from core.agent import run_agent
+from core import config, feedback, runner, spend
+from core.office import AGENTS
+from core.web import start_web
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 dp = Dispatcher()
-JOBS: dict[str, dict] = {}        # job_id -> {agent, task, files}
 WAIT_REASON: dict[int, str] = {}  # user_id -> job_id, ждём причину переделки
-AGENT_TITLES = {"designer": "🎨 Дизайнер"}
+BOT: Bot | None = None
 
 HELP = (
     "Команда dsgners на связи.\n\n"
-    "Просто напиши задачу — её возьмёт дизайнер. Например:\n"
-    "«Обложка для поста: как мы переделали онбординг, рост конверсии 34%. Телега и сторис»\n\n"
+    "Напиши задачу — её возьмёт дизайнер. Например:\n"
+    "«Обложка для поста: как мы переделали онбординг, конверсия +34%. Телега и сторис»\n\n"
     "Можно прислать картинку (работу автора) с подписью-задачей.\n\n"
+    "/office — ссылка на ИИ-офис\n"
     "/rules — правила, которые дизайнер выучил из твоих правок\n"
     "/spend — расходы на API за месяц"
 )
@@ -50,6 +51,17 @@ async def help_(m: Message):
         await m.answer(HELP)
 
 
+@dp.message(Command("office"))
+async def office_link(m: Message):
+    if not is_owner(m):
+        return
+    dom = config.ROOT / ".office_domain"
+    if dom.exists() and config.OFFICE_TOKEN:
+        await m.answer(f"https://{dom.read_text().strip()}/?token={config.OFFICE_TOKEN}\n\nНикому не пересылай — по ссылке полный доступ.")
+    else:
+        await m.answer("Офис ещё не установлен — запусти deploy/install.sh на сервере.")
+
+
 @dp.message(Command("rules"))
 async def rules(m: Message):
     if not is_owner(m):
@@ -62,7 +74,7 @@ async def rules(m: Message):
 async def spend_cmd(m: Message):
     if not is_owner(m):
         return
-    parts = [f"{AGENT_TITLES.get(a, a)}: ${v:.2f}" for a, v in spend.by_agent_this_month().items()]
+    parts = [f"{AGENTS.get(a, {}).get('title', a)}: ${v:.2f}" for a, v in spend.by_agent_this_month().items()]
     await m.answer(f"Расход за месяц: ${spend.this_month():.2f} из ${config.MONTHLY_LIMIT_USD:.0f}\n" + "\n".join(parts))
 
 
@@ -71,14 +83,15 @@ async def with_image(m: Message, bot: Bot):
     if not is_owner(m):
         return
     if m.document and not (m.document.mime_type or "").startswith("image/"):
-        await m.answer("Пока понимаю только картинки.")
+        await m.answer("Пока понимаю только картинки. Документы для агента загружай в офисе → «Знания».")
         return
     file_id = m.photo[-1].file_id if m.photo else m.document.file_id
     ext = ".jpg" if m.photo else ("." + (m.document.file_name or "x.png").rsplit(".", 1)[-1])
     dest = config.DATA / "uploads" / f"{uuid.uuid4().hex[:10]}{ext}"
     await bot.download(file_id, destination=dest)
-    task = (m.caption or "Сделай визуал с этой работой") + f"\n\nПрикреплённая картинка: {dest}"
-    await launch(m, "designer", task)
+    shown = m.caption or "Визуал с прикреплённой работой"
+    runner.start_job("designer", shown, source="telegram", full_task=f"{shown}\n\nПрикреплённая картинка: {dest}")
+    await m.answer("🎨 Дизайнер взял задачу. Пришлю результат сюда.")
 
 
 @dp.message(F.text)
@@ -87,69 +100,50 @@ async def text_task(m: Message):
         return
     uid = m.from_user.id
     if uid in WAIT_REASON:
-        job = JOBS.get(WAIT_REASON.pop(uid))
-        if job:
-            feedback.add_rule(job["agent"], m.text, job["task"])
-            await m.answer("Записал в правила. Переделываю…")
-            redo_task = f"{job['task']}\n\nПредыдущий вариант отклонён владельцем. Причина: {m.text}"
-            await launch(m, job["agent"], redo_task, original=job["task"])
-            return
-    await launch(m, "designer", m.text)
-
-
-async def launch(m: Message, agent: str, task: str, original: str | None = None):
-    title = AGENT_TITLES.get(agent, agent)
-    status = await m.answer(f"{title} взялся за задачу…")
-
-    async def progress(txt: str):
+        jid = WAIT_REASON.pop(uid)
         try:
-            await status.edit_text(f"{title}: {txt}…")
-        except Exception:
-            pass
-
-    try:
-        res = await run_agent(agent, task, progress=progress)
-    except Exception as e:
-        logging.exception("agent failed")
-        await status.edit_text(f"⚠️ {title}: ошибка — {e}")
+            runner.redo(jid, m.text, source="telegram")
+            await m.answer("Записал в правила. Переделываю…")
+        except ValueError as e:
+            await m.answer(f"Не вышло: {e}")
         return
+    runner.start_job("designer", m.text, source="telegram")
+    await m.answer("🎨 Дизайнер взял задачу. Пришлю результат сюда.")
 
-    if not res["files"]:
-        await status.edit_text(f"{title} ничего не сдал:\n{res['text'][:3500]}")
+
+async def send_review(job: dict):
+    """Готовая работа → владельцам в Telegram."""
+    if not BOT:
         return
-
-    job_id = uuid.uuid4().hex[:8]
-    JOBS[job_id] = {"agent": agent, "task": original or task, "files": res["files"]}
-    files = res["files"][:10]
-    if len(files) == 1:
-        await m.answer_photo(FSInputFile(files[0]))
-    else:
-        await m.answer_media_group([InputMediaPhoto(media=FSInputFile(f)) for f in files])
+    files = [config.OUTBOX / f for f in job["files"]][:10]
+    title = AGENTS[job["agent"]]["title"]
     kb = InlineKeyboardMarkup(inline_keyboard=[[
-        InlineKeyboardButton(text="✅ Ок", callback_data=f"ok:{job_id}"),
-        InlineKeyboardButton(text="🔁 Переделать", callback_data=f"redo:{job_id}"),
+        InlineKeyboardButton(text="✅ Ок", callback_data=f"ok:{job['id']}"),
+        InlineKeyboardButton(text="🔁 Переделать", callback_data=f"redo:{job['id']}"),
     ]])
-    await m.answer(f"{res['text'][:3500]}\n\n💸 ${res['cost']:.3f}", reply_markup=kb)
-    try:
-        await status.delete()
-    except Exception:
-        pass
+    for uid in config.OWNER_IDS:
+        if len(files) == 1:
+            await BOT.send_photo(uid, FSInputFile(files[0]))
+        else:
+            await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in files])
+        await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}", reply_markup=kb)
 
 
 @dp.callback_query(F.data.startswith("ok:"))
 async def approve(c: CallbackQuery):
     if not is_owner(c):
         return
-    job = JOBS.get(c.data.split(":", 1)[1])
-    if not job:
-        await c.answer("Задача устарела (бот перезапускался)")
+    try:
+        job = runner.approve(c.data.split(":", 1)[1])
+    except ValueError as e:
+        await c.answer(str(e))
         return
-    approved = config.OUTBOX / "approved"
-    approved.mkdir(exist_ok=True)
-    for f in job["files"]:
-        shutil.copy(f, approved / f"{f.parent.name}-{f.name}")
-        await c.message.answer_document(FSInputFile(f), caption="Исходник без сжатия")
     await c.message.edit_reply_markup(reply_markup=None)
+    if job["status"] != "approved":
+        await c.answer("Эта задача уже не на согласовании")
+        return
+    for f in job["files"]:
+        await c.message.answer_document(FSInputFile(config.OUTBOX / f), caption="Исходник без сжатия")
     await c.answer("Принято 👍")
 
 
@@ -157,21 +151,22 @@ async def approve(c: CallbackQuery):
 async def redo(c: CallbackQuery):
     if not is_owner(c):
         return
-    job_id = c.data.split(":", 1)[1]
-    if job_id not in JOBS:
-        await c.answer("Задача устарела (бот перезапускался)")
-        return
-    WAIT_REASON[c.from_user.id] = job_id
+    WAIT_REASON[c.from_user.id] = c.data.split(":", 1)[1]
     await c.message.edit_reply_markup(reply_markup=None)
-    await c.message.answer("Что не так? Напиши одним сообщением — это станет правилом, и я переделаю.")
+    await c.message.answer("Что не так? Напиши одним сообщением — это станет правилом, и дизайнер переделает.")
     await c.answer()
 
 
 async def main():
+    global BOT
+    await start_web()
+    logging.info("ИИ-офис слушает порт %s", config.OFFICE_PORT)
     if not config.TELEGRAM_BOT_TOKEN:
-        raise SystemExit("Нет TELEGRAM_BOT_TOKEN в .env")
-    bot = Bot(config.TELEGRAM_BOT_TOKEN)
-    await dp.start_polling(bot)
+        logging.warning("Нет TELEGRAM_BOT_TOKEN — работает только офис")
+        await asyncio.Event().wait()
+    BOT = Bot(config.TELEGRAM_BOT_TOKEN)
+    runner.on_review(send_review)
+    await dp.start_polling(BOT)
 
 
 if __name__ == "__main__":

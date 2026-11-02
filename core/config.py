@@ -19,9 +19,14 @@ MONTHLY_LIMIT_USD = float(os.getenv("MONTHLY_LIMIT_USD", "50"))
 
 MAX_STEPS = int(os.getenv("MAX_STEPS", "14"))
 
+# ИИ-офис (веб)
+OFFICE_TOKEN = os.getenv("OFFICE_TOKEN", "")
+OFFICE_HOST = os.getenv("OFFICE_HOST", "127.0.0.1")
+OFFICE_PORT = int(os.getenv("OFFICE_PORT", "8080"))
+
 TEAM = ROOT / "team"
 AGENTS = ROOT / "agents"
 DATA = ROOT / "data"
 OUTBOX = ROOT / "outbox"
-for d in (DATA, OUTBOX, DATA / "feedback", DATA / "uploads"):
+for d in (DATA, OUTBOX, DATA / "feedback", DATA / "uploads", DATA / "agents", DATA / "knowledge"):
     d.mkdir(parents=True, exist_ok=True)

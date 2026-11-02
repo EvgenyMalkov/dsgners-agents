@@ -1,5 +1,5 @@
 [Unit]
-Description=dsgners AI team (Telegram bot)
+Description=dsgners AI team (Telegram bot + office)
 After=network-online.target
 Wants=network-online.target
 

@@ -3,7 +3,8 @@
 Агент = папка agents/<имя>/ с файлами:
   ROLE.md       — роль и порядок работы
   checklist.md  — чек-лист качества (необязательно)
-  feedback.md   — правила, собранные из правок владельца (курируемые, в git)
+  feedback.md   — утверждённые правила (в git)
+Тексты можно переопределить из офиса (data/agents/<имя>/), документы и референсы — core/knowledge.py.
   tools.py      — TOOLS (описания для модели) и async handle(name, input, ctx)
 Плюс общий мозг team/*.md и живые правила data/feedback/<имя>.md (пополняются из Telegram).
 """
@@ -18,7 +19,7 @@ from pathlib import Path
 import anthropic
 from PIL import Image
 
-from core import config, spend
+from core import config, knowledge, spend
 
 
 @dataclass
@@ -36,17 +37,39 @@ def _read(p: Path) -> str:
 
 
 def build_system(agent: str, extra: str = "") -> str:
-    a = config.AGENTS / agent
+    kn = knowledge
+    docs = kn.docs_text(agent)
     parts = [
         "# Общий мозг команды dsgners\n" + _read(config.TEAM / "brand.md"),
         _read(config.TEAM / "rules.md"),
-        f"# Твоя роль: {agent}\n" + _read(a / "ROLE.md"),
-        _read(a / "checklist.md"),
+        f"# Твоя роль: {agent}\n" + kn.load_text(agent, "ROLE.md"),
+        kn.load_text(agent, "checklist.md"),
         "# Правила из прошлых правок владельца (соблюдай строго)\n"
-        + _read(a / "feedback.md") + "\n" + _read(config.DATA / "feedback" / f"{agent}.md"),
+        + kn.load_text(agent, "feedback.md") + "\n" + kn.load_text(agent, "live-rules.md"),
+        ("# Справочные документы\n" + docs) if docs else "",
         extra,
     ]
     return "\n\n".join(p.strip() for p in parts if p.strip())
+
+
+def first_message(agent: str, task: str) -> list:
+    """Задача + референсы «хорошо/плохо» (картинки), если они загружены в офисе."""
+    content: list = []
+    for kind, head, limit in (("good", "Референсы «так хорошо» — ориентируйся на них:", 4),
+                              ("bad", "Антиреференсы «так плохо» — так не делай:", 3)):
+        imgs = knowledge.refs(agent, kind)[:limit]
+        if not imgs:
+            continue
+        content.append({"type": "text", "text": head})
+        for img in imgs:
+            content.append(image_block(img, 700))
+            note = knowledge.note_for(img)
+            if note:
+                content.append({"type": "text", "text": f"↑ {note}"})
+    if content:
+        content[-1]["cache_control"] = {"type": "ephemeral"}
+    content.append({"type": "text", "text": "# Задача\n" + task})
+    return content
 
 
 def image_block(png: Path, max_side: int = 1100) -> dict:
@@ -82,7 +105,7 @@ async def run_agent(agent: str, task: str, progress=None) -> dict:
     extra = getattr(tools_mod, "system_extra", lambda: "")()
     system = [{"type": "text", "text": build_system(agent, extra), "cache_control": {"type": "ephemeral"}}]
     client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
-    messages: list = [{"role": "user", "content": task}]
+    messages: list = [{"role": "user", "content": first_message(agent, task)}]
     cost = 0.0
     final_text = ""
 
