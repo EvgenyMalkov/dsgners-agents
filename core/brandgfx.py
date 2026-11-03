@@ -104,8 +104,9 @@ def build(w: int, h: int, *, motifs=None, palette="auto", mode="mix", image=None
     # mix: наслоение шейпов, близких по размеру, вдоль длинной стороны блока
     ratio = w / h
     k = sum(1 for m in (motifs or []) if m in shapes())
+    cut = bool(image) and image_shape == "cutout"
     if image:
-        n = 2
+        n = 3 if cut else 2
     elif ratio > 2.2 or ratio < 1 / 2.2:
         n = min(4, max(3, k or 3))
     else:
@@ -117,7 +118,9 @@ def build(w: int, h: int, *, motifs=None, palette="auto", mode="mix", image=None
     horizontal = ratio >= 1
     L, S = (w, h) if horizontal else (h, w)          # длинная и короткая сторона
     size = min(S * 0.98, L / n * 1.3)
-    if image:
+    if cut:
+        centers = [0.12, 0.5, 0.88]   # шейпы вокруг и позади человека
+    elif image:
         centers = [0.1, 0.9]
     elif n == 2:
         centers = [0.22, 0.8]
@@ -139,7 +142,12 @@ def build(w: int, h: int, *, motifs=None, palette="auto", mode="mix", image=None
         cx, cy = (c_long, c_short) if horizontal else (c_short, c_long)
         out.append(_svg_shape(nm, cx - s_ / 2, cy - s_ / 2, s_, s_, fill, stroke, outline,
                               rnd.uniform(-14, 14), z=1 + i))
-    if image:
+    if cut:
+        # одно фото человека — обтравка: стоит на нижнем крае блока поверх графики, без рамки (гайдбук «Фото»)
+        out.append(f'<img class="photo cutout" src="{escape(image)}" alt="" style="position:absolute;'
+                   f'left:50%;bottom:0;transform:translateX(-50%);height:{h * 0.94:.0f}px;max-width:{w * 0.8:.0f}px;'
+                   f'object-fit:contain;object-position:bottom center;z-index:10">')
+    elif image:
         fill, stroke = pal["pairs"][0]
         ph = h * 0.8
         pw = ph * (1.0 if image_shape == "circle" else 1.25)
@@ -164,3 +172,41 @@ def font_css() -> str:
     link = "" if faces else ('<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500&display=swap" '
                              'rel="stylesheet">')
     return link + "<style>" + "".join(faces) + "</style>"
+
+
+# ---------- обтравка фото человека (rembg, модель u2net_human_seg) ----------
+_session = None
+
+
+def cutout(path: str) -> str | None:
+    """Убирает фон с фото человека, обрезает по контуру. Возвращает путь к PNG или None, если не вышло."""
+    from pathlib import Path
+    src = Path(path)
+    if not src.exists():
+        return None
+    import hashlib as _h
+    from PIL import Image
+    key = _h.md5(src.read_bytes()).hexdigest()[:16]
+    out = config.DATA / "cutouts" / f"{key}.png"
+    if out.exists():
+        return str(out)
+    global _session
+    try:
+        from rembg import new_session, remove
+        if _session is None:
+            _session = new_session("u2net_human_seg")
+        im = Image.open(src).convert("RGB")
+        im.thumbnail((1600, 1600))
+        res = remove(im, session=_session, post_process_mask=True)
+        bbox = res.getbbox()
+        if not bbox:
+            return None
+        res = res.crop(bbox)
+        # человек «стоит» на нижнем крае: если обрезан снизу кадра — ок; иначе всё равно ставим вниз
+        out.parent.mkdir(parents=True, exist_ok=True)
+        res.save(out, "PNG")
+        return str(out)
+    except Exception:
+        import logging
+        logging.exception("cutout failed")
+        return None

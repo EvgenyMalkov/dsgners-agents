@@ -36,7 +36,7 @@ TOOLS = [
                         "palette": {"type": "string", "enum": ["auto", "green", "lime", "blue", "cyan", "violet", "pink", "orange", "red", "yellow"]},
                         "motifs": {"type": "array", "items": {"type": "string"}},
                         "image": {"type": "string"},
-                        "image_shape": {"type": "string", "enum": ["rounded", "circle"]},
+                        "image_shape": {"type": "string", "enum": ["cutout", "circle", "rounded"]},
                         "tag_color": {"type": "string"},
                         "hide_logo": {"type": "boolean"},
                         "items": {"type": "array", "items": {"type": "string"}},
@@ -81,6 +81,8 @@ async def handle(name: str, inp: dict, ctx: Ctx):
         if ctx.progress:
             await ctx.progress(f"рендерю {inp['template']}: {inp['data'].get('title', '')[:40]}")
         issues = await render(inp["template"], inp.get("data", {}), png)
+        png.with_suffix(".json").write_text(json.dumps({"template": inp["template"], "data": inp.get("data", {})},
+                                                       ensure_ascii=False), "utf-8")
         text = ("Проблем нет." if not issues else "Найдены проблемы:\n- " + "\n- ".join(issues))
         return [{"type": "text", "text": f"Файл: {fname}\n{text}"}, image_block(png)]
 

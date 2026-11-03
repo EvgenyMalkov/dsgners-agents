@@ -149,7 +149,18 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     if isinstance(tb, dict):
         ctx["table"] = {"columns": [typograf(str(c)) for c in tb.get("columns", [])][:4],
                         "rows": [[typograf(str(v)) for v in r] for r in tb.get("rows", [])][:6]}
-    image = _image_src(ctx.pop("image", None))
+    raw_image = ctx.pop("image", None)
+    warn = []
+    if raw_image and ctx.get("image_shape") == "cutout" and not str(raw_image).startswith(("http", "data:")):
+        import asyncio
+        p_ = Path(raw_image) if Path(raw_image).is_absolute() else config.ROOT / raw_image
+        cut = await asyncio.to_thread(brandgfx.cutout, str(p_))
+        if cut:
+            raw_image = cut
+        else:
+            ctx["image_shape"] = "circle"
+            warn.append("Обтравка не получилась (не нашёл человека на фото) — поставил фото в круг с обводкой.")
+    image = _image_src(raw_image)
     ctx["author_photo"] = _image_src(ctx.get("author_photo"))
     geo = _geometry(meta, ctx.get("layout", "info-left" if meta["geo"]["split"] == "h" else ""))
     motifs = ctx.get("motifs")
@@ -178,7 +189,7 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
             await page.locator("#canvas").screenshot(path=str(out_png))
         finally:
             await browser.close()
-    return issues
+    return warn + issues
 
 
 MOCKUP_CHECK_JS = r"""

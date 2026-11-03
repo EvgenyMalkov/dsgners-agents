@@ -662,7 +662,7 @@ function renderSide(){
   $('allBtn').hidden = !a;
   $('knowTab').hidden = !a; $('skillsTab').hidden = !a;
   $('askForm').hidden = !a || a.inactive;
-  $('askInput').placeholder = 'Опиши задачу…';
+  $('askInput').placeholder = 'Опиши задачу… (Ctrl+Enter — отправить)';
 }
 function select(id){
   selected = id;
@@ -681,7 +681,7 @@ $('stage').addEventListener('click', ev => {
 });
 const askIn = $('askInput');
 askIn.addEventListener('input', () => { askIn.style.height = '42px'; askIn.style.height = Math.min(140, askIn.scrollHeight) + 'px'; });
-askIn.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); $('askForm').requestSubmit(); } });
+askIn.addEventListener('keydown', e => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)){ e.preventDefault(); $('askForm').requestSubmit(); } });
 $('askForm').addEventListener('submit', async ev => {
   ev.preventDefault();
   const text = askIn.value.trim(); if (!text || !selected) return;

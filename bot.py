@@ -21,7 +21,8 @@ from core.web import start_web
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 dp = Dispatcher()
-WAIT_REASON: dict[int, str] = {}  # user_id -> job_id, ждём причину переделки
+WAIT_REASON: dict[int, str] = {}
+MSG_JOB: dict[int, str] = {}      # message_id сообщений с результатом -> job_id (ответ на них = правка)  # user_id -> job_id, ждём причину переделки
 WAIT_BULK: set[int] = set()       # ждём комментарий к пробной партии массового SEO
 BOT: Bot | None = None
 
@@ -470,6 +471,14 @@ async def text_task(m: Message):
         except ValueError as e:
             await m.answer(f"Не вышло: {e}")
         return
+    rep = m.reply_to_message
+    if rep and rep.message_id in MSG_JOB and not m.text.startswith("/"):
+        try:
+            runner.redo(MSG_JOB[rep.message_id], m.text, source="telegram")
+            await m.answer("Понял, это правка к той работе. Записал в правила и переделываю…")
+        except ValueError as e:
+            await m.answer(f"Не вышло: {e}")
+        return
     agent, task = route(m.text)
     await _start(m, agent, task)
 
@@ -503,9 +512,11 @@ async def send_review(job: dict):
     ]])
     for uid in config.OWNER_IDS:
         if len(imgs) == 1:
-            await BOT.send_photo(uid, FSInputFile(imgs[0]))
+            sent = await BOT.send_photo(uid, FSInputFile(imgs[0]))
+            MSG_JOB[sent.message_id] = job["id"]
         elif imgs:
-            await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in imgs])
+            for sent in await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in imgs]):
+                MSG_JOB[sent.message_id] = job["id"]
         for d in docs:
             await BOT.send_document(uid, FSInputFile(d))
         if meta.get("letter"):
@@ -518,7 +529,9 @@ async def send_review(job: dict):
                 + (f"\nalt картинок: {len(f.get('images') or [])}; разметка: {'да' if f.get('jsonld') else 'нет'}"))
         for i, p in enumerate(posts, 1):
             await BOT.send_message(uid, f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n{p['text'][:3900]}")
-        await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}", reply_markup=kb)
+        sent = await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}\n\n"
+                                      "Правки — ответом на это сообщение или кнопкой «Переделать».", reply_markup=kb)
+        MSG_JOB[sent.message_id] = job["id"]
 
 
 async def publish_posts(job: dict):

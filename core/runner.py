@@ -26,9 +26,38 @@ def _short(s: str, n=70) -> str:
     return s if len(s) <= n else s[: n - 1] + "…"
 
 
+def _recent_context(agent: str, n: int = 3) -> str:
+    """Последние задачи агента — чтобы короткие реплики вроде «а в брендбуке лучше вариант…» понимались как правка."""
+    import json
+    import time as _t
+    recent = [j for j in office.list_jobs(agent, 10)
+              if j["status"] in ("review", "approved", "redo") and _t.time() - (j["created"] or 0) < 3 * 86400][:n]
+    if not recent:
+        return ""
+    lines = []
+    for j in recent:
+        renders = []
+        for f in j["files"][:4]:
+            pj = (config.OUTBOX / f).with_suffix(".json")
+            if pj.exists():
+                try:
+                    d = json.loads(pj.read_text("utf-8"))
+                    renders.append(f"{f.split('/')[-1]} ← {d.get('template')}: " + json.dumps(d.get("data", {}), ensure_ascii=False)[:500])
+                except Exception:
+                    pass
+        lines.append(f"- [{j['status']}] «{_short(j['task'], 120)}» → {_short(j.get('caption') or '', 160)}"
+                     + ("".join(f"\n    {r}" for r in renders) if renders else ""))
+    return ("\n\n# Твои недавние задачи (для контекста)\n" + "\n".join(lines) +
+            "\nЕсли новая задача похожа на правку или комментарий к одной из них («поменяй», «лучше вариант», "
+            "«не тот шаблон»…) — переделай ту работу с учётом комментария, взяв её параметры за основу. "
+            "Если сообщение явно оборвано или непонятно — сделай лучший вариант по смыслу и в подписи скажи, как понял.")
+
+
 def start_job(agent: str, task: str, source: str, parent: str | None = None, full_task: str | None = None) -> str:
     if agent not in AGENTS or not AGENTS[agent]["active"]:
         raise ValueError(f"Агент {agent} пока не работает")
+    if parent is None and not source.startswith("agent:"):
+        full_task = (full_task or task) + _recent_context(agent)
     jid = office.create_job(agent, task, full_task or task, source, parent)
     if _locks[agent].locked():
         office.emit(agent, "info", f"В очереди: {_short(task)}", jid)

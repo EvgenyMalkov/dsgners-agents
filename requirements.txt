@@ -8,3 +8,4 @@ aiohttp>=3.9
 pypdf>=4
 openpyxl>=3.1
 markdown>=3.5
+rembg[cpu]>=2.0.50
