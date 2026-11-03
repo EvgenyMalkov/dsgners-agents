@@ -51,6 +51,10 @@ SEO_OWN_AUTHORS = {a.strip().lower() for a in os.getenv("SEO_OWN_AUTHORS", "dsgn
 # Автопилот SEO-агента: сам берёт задачи (новые статьи, недельный отчёт, контент-план, разбор за месяц).
 # 0 — только мониторинг и алерты без ИИ; задачи — только по командам. Переключается в боте: /seo_auto on|off
 SEO_AUTOPILOT = os.getenv("SEO_AUTOPILOT", "0") == "1"
+# Советы авторам в день публикации: новая статья автора → за ~30 мин письмо с советами (на «Ок»). /seo_tips on|off
+SEO_AUTHOR_TIPS = os.getenv("SEO_AUTHOR_TIPS", "1") == "1"
+SEO_AUTHOR_TIPS_PER_DAY = int(os.getenv("SEO_AUTHOR_TIPS_PER_DAY", "30"))
+SEO_TIPS_AUTO_SEND = os.getenv("SEO_TIPS_AUTO_SEND", "0") == "1"   # 1 — слать авторам без «Ок» (нужен API сайта)
 SEO_TOPICS_PER_WEEK = int(os.getenv("SEO_TOPICS_PER_WEEK", "5"))   # тем в недельном контент-плане
 # 1 — планы статей из контент-плана принимаются автоматически (ты согласуешь только список тем и готовый текст)
 SEO_AUTO_PLANS = os.getenv("SEO_AUTO_PLANS", "0") == "1"

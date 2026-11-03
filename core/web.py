@@ -61,6 +61,11 @@ async def state(req):
     })
 
 
+async def schedule(req):
+    from core.seo.scheduler import schedule_info
+    return web.json_response(schedule_info())
+
+
 async def ws(req):
     sock = web.WebSocketResponse(heartbeat=25)
     await sock.prepare(req)
@@ -269,6 +274,7 @@ def make_app() -> web.Application:
     app = web.Application(middlewares=[auth], client_max_size=16 * 1024 * 1024)
     app.router.add_get("/", page)
     app.router.add_get("/api/state", state)
+    app.router.add_get("/api/schedule", schedule)
     app.router.add_get("/ws", ws)
     app.router.add_post("/api/agent/{agent}/ask", ask)
     app.router.add_get("/api/jobs", jobs)

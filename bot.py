@@ -42,6 +42,7 @@ HELP = (
     "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
     "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n"
     "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n"
+    "/seo_tips on|off — письма авторам с советами в день публикации\n"
     "/seo_stop — остановить SEO-агента (снять очередь, выключить автопилот); /seo_auto on|off — автопилот\n"
     "/seo_bulk — массово оформить старые статьи (title, description, OG, alt): пробная партия → «Ок» → все\n"
     "/seo_plan — контент-план сейчас (сам приходит по вторникам): что писать и что обновлять по данным\n"
@@ -405,6 +406,22 @@ async def seo_auto(m: Message):
                     "делает контент-план и разбор за месяц." if on else
                     "⏸ Автопилот SEO выключен: мониторинг и алерты работают (без ИИ), задачи агенту — только по командам "
                     "/seo_fix, /article, /seo_plan, /seo.") + "\nПереключить: /seo_auto on | off")
+
+
+@dp.message(Command("seo_tips"))
+async def seo_tips(m: Message):
+    if not is_owner(m):
+        return
+    from core.seo import author_tips, store as seo_store
+    arg = (m.text or "").partition(" ")[2].strip().lower()
+    if arg in ("on", "вкл", "1"):
+        seo_store.put("author_tips", True)
+    elif arg in ("off", "выкл", "0"):
+        seo_store.put("author_tips", False)
+    on = author_tips.enabled()
+    await m.answer(("✉️ Советы авторам включены: каждая новая статья автора проверяется в течение ~30 минут, "
+                    "письмо с советами приходит тебе на «Ок»." if on else "Советы авторам выключены.")
+                   + "\nПереключить: /seo_tips on | off")
 
 
 @dp.message(Command("seo_stop"))

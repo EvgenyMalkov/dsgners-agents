@@ -268,7 +268,13 @@ async def new_pages() -> str:
     fresh = [r for r in reports if r.url in new and is_content(r.url) and r.status == 200 and not r.noindex
              and not store.was_optimized(r.url)]
     from core import site_api
-    from core.seo import bulk
+    from core.seo import author_tips, bulk
+    if fresh and author_tips.enabled():
+        authors = [r for r in fresh if not is_own(r.url)]
+        note = await author_tips.run_for(authors, is_own, author_of)
+        if note:
+            notes.append(note)
+        fresh = [r for r in fresh if is_own(r.url)]   # статьи авторов уже обработаны советами
     if fresh and bulk.state().get("phase") in ("running", "done") and site_api.enabled():
         # стиль массового оформления владелец уже одобрил — новые статьи оформляются сразу и без согласования
         d = bulk._db()
@@ -497,6 +503,9 @@ def status_text() -> str:
     lines.append(f"\nАдресов в sitemap: {len(store.known_urls())}; авто-оформлений сегодня: "
                  f"{_optimized_today()}/{config.SEO_AUTO_OPTIMIZE_PER_DAY}")
     lines.append("Автопилот SEO-агента: " + ("включён" if autopilot() else "выключен — задачи только по командам (/seo_auto on)"))
+    from core.seo import author_tips
+    lines.append("Советы авторам в день публикации: " + ("включены" if author_tips.enabled() else "выключены")
+                 + f" (сегодня проверено статей: {author_tips._today_count()}/{config.SEO_AUTHOR_TIPS_PER_DAY})")
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
     lines.append("IndexNow: " + ("подключён" if config.INDEXNOW_KEY else "нет ключа"))
     from core.seo import keywords

@@ -104,3 +104,57 @@ async def loop():
             except Exception:
                 log.exception("scheduler")
         await asyncio.sleep(60)
+
+
+# ---------- расписание для ИИ-офиса (вкладка «Расписание») ----------
+
+def schedule_info() -> dict:
+    """Что, когда и кто делает сам — с последним запуском и тем, включено ли."""
+    from core import config, site_api
+    from core.seo import author_tips, bulk
+    runs = {r["name"]: r for r in store.runs()}
+    auto = monitor.autopilot()
+
+    def last(name):
+        r = runs.get(name)
+        if not r:
+            return None
+        return {"ts": r["ts"], "ok": bool(r["ok"]), "note": r["note"]}
+
+    seo = [
+        {"when": "каждый час", "what": "Сайт отвечает, robots.txt не закрыл сайт, SSL не истекает",
+         "out": "алерт в Telegram, только если сломалось или починилось", "ai": False, "on": config.SEO_MONITOR,
+         "last": last("hourly")},
+        {"when": "каждые 30 минут", "what": "Новые адреса в sitemap: проверка страницы, переобход в Яндексе, IndexNow",
+         "out": "алерт только при критичной ошибке на новой странице", "ai": False, "on": config.SEO_MONITOR,
+         "last": last("new_pages")},
+        {"when": "каждые 30 минут", "what": "Новая статья автора → проверка и письмо автору с советами (~1–2 ¢)",
+         "out": "письмо тебе на «Ок»" + (" → уйдёт автору сам" if config.SEO_TIPS_AUTO_SEND and site_api.enabled() else ""),
+         "ai": True, "on": author_tips.enabled(), "switch": "/seo_tips on|off", "last": last("new_pages")},
+        {"when": "каждые 30 минут", "what": "Новая статья редакции → пакет SEO-оформления (до "
+         f"{config.SEO_AUTO_OPTIMIZE_PER_DAY} в день)", "out": "пакет тебе на «Ок»", "ai": True, "on": auto,
+         "switch": "/seo_auto on|off", "last": None},
+        {"when": "ежедневно 08:30", "what": "Вебмастер (страниц в поиске, ошибки) и Метрика (трафик к прошлой неделе)",
+         "out": "алерт только при просадке", "ai": False, "on": config.SEO_MONITOR, "last": last("daily")},
+        {"when": "понедельник 09:00", "what": "Полный обход сайта, недельный отчёт",
+         "out": "файл отчёта" + (" + список задач от агента" if auto else ""), "ai": False, "on": config.SEO_MONITOR,
+         "last": last("weekly")},
+        {"when": "вторник 10:00", "what": "Контент-план на неделю: что писать и что обновлять", "out": "план тебе на «Ок»",
+         "ai": True, "on": auto, "switch": "/seo_auto on|off", "last": last("content_plan")},
+        {"when": "1-е число 10:00", "what": "Разбор результатов за месяц и новые правила для агента",
+         "out": "отчёт + правила на «Ок»", "ai": True, "on": auto, "switch": "/seo_auto on|off", "last": last("monthly")},
+        {"when": "каждый час, пока идёт", "what": "Массовое оформление старых статей (/seo_bulk)",
+         "out": "раз в день отчёт о ходе", "ai": True, "on": bulk.state().get("phase") == "running",
+         "switch": "/seo_bulk", "last": last("bulk")},
+    ]
+    only_tasks = "Сам ничего не запускает — только задачи от тебя (бот или офис) и просьбы коллег внутри твоих задач."
+    return {
+        "tz": config.SEO_TZ,
+        "agents": [
+            {"id": "seo", "title": "SEO-шник", "items": seo,
+             "note": "Без ИИ — бесплатно. С ИИ — тратит API, включается переключателем."},
+            {"id": "designer", "title": "Графический дизайнер", "items": [], "note": only_tasks},
+            {"id": "webdesigner", "title": "Веб-дизайнер", "items": [], "note": only_tasks},
+            {"id": "smm", "title": "SMM-щик", "items": [], "note": only_tasks + " Публикует в каналы только после «Ок»."},
+        ],
+    }
