@@ -4,6 +4,7 @@ check_url(url) → PageReport: что на странице есть (title, des
 и список проблем [(уровень, код, текст)]. Уровни: critical — страница выпадет или уже выпала из поиска;
 warning — теряем трафик или красоту сниппета; info — можно улучшить.
 """
+import asyncio
 import json
 import re
 import time
@@ -18,6 +19,8 @@ UA = "Mozilla/5.0 (compatible; dsgners-seo-bot/1.0; +https://dsgners.ru)"
 TITLE_MIN, TITLE_MAX = 25, 70
 DESC_MIN, DESC_MAX = 70, 170
 THIN_WORDS = 250
+SITEMAP_TIMEOUT = 120   # секунд на один sitemap-файл (секции на тысячи адресов генерируются долго)
+SITEMAP_RETRY_PAUSE = 10
 
 
 LABELS = {
@@ -58,7 +61,7 @@ async def fetch(url: str, session: aiohttp.ClientSession | None = None, max_byte
     cur = url
     try:
         for _ in range(max_hops + 1):
-            async with session.get(cur, allow_redirects=False) as r:
+            async with session.get(cur, allow_redirects=False, timeout=aiohttp.ClientTimeout(total=timeout)) as r:
                 if r.status in (301, 302, 303, 307, 308) and r.headers.get("Location"):
                     res.chain.append((r.status, cur))
                     cur = urljoin(cur, r.headers["Location"])
@@ -74,7 +77,8 @@ async def fetch(url: str, session: aiohttp.ClientSession | None = None, max_byte
         else:
             res.error = f"больше {max_hops} редиректов"
     except Exception as e:
-        res.error = f"{type(e).__name__}: {e}"[:200]
+        res.error = (f"тайм-аут {timeout} с" if isinstance(e, asyncio.TimeoutError)
+                     else f"{type(e).__name__}: {e}"[:200])
     finally:
         res.ms = int((time.monotonic() - t) * 1000)
         if own:
@@ -313,19 +317,45 @@ async def check_url(url: str, session=None, is_article: bool = False) -> PageRep
 
 # ---------- sitemap ----------
 
-async def read_sitemaps(urls: list[str], session=None, limit=50_000) -> dict[str, str]:
-    """{адрес страницы: lastmod}. Понимает индекс sitemap-ов (вложенность до 3)."""
-    out: dict[str, str] = {}
+@dataclass
+class SitemapResult:
+    urls: dict = field(default_factory=dict)      # {адрес страницы: (lastmod, sitemap-файл, откуда адрес)}
+    failed: list = field(default_factory=list)    # [(sitemap-файл, причина)] — не загрузились даже после повторов
+    files: list = field(default_factory=list)     # sitemap-файлы, которые прочитаны успешно
+
+
+async def _fetch_sitemap(url: str, session, tries=3) -> Fetched:
+    """Sitemap с повторами: большой файл секции может не успеть за один раз — это не повод считать его пустым."""
+    import asyncio
+    f = Fetched(url=url, final=url, status=0)
+    for i in range(tries):
+        f = await fetch(url, session, max_bytes=60_000_000, timeout=SITEMAP_TIMEOUT)
+        if f.status == 200 and f.html and ("<urlset" in f.html or "<sitemapindex" in f.html):
+            return f
+        if 400 <= f.status < 500 and f.status != 429:
+            break                      # 404/403 — повтор не поможет
+        if i < tries - 1:
+            await asyncio.sleep(SITEMAP_RETRY_PAUSE * (i + 1))
+    if f.status == 200 and not f.error:
+        f.error = "ответ без <urlset>/<sitemapindex> (обрезан или не XML)"
+    return f
+
+
+async def read_sitemaps(urls: list[str], session=None, limit=200_000) -> SitemapResult:
+    """Читает sitemap и индексы sitemap-ов (вложенность до 3). Неудачные секции попадают в failed, а не «пустые»."""
+    res = SitemapResult()
     queue = [(u, 0) for u in urls]
     seen = set()
-    while queue and len(out) < limit:
+    while queue and len(res.urls) < limit:
         sm, depth = queue.pop(0)
         if sm in seen:
             continue
         seen.add(sm)
-        f = await fetch(sm, session, max_bytes=30_000_000, timeout=60)
-        if f.status != 200 or not f.html:
+        f = await _fetch_sitemap(sm, session)
+        if f.status != 200 or f.error:
+            res.failed.append((sm, f.error or f"HTTP {f.status}"))
             continue
+        res.files.append(sm)
         xml = f.html
         if "<sitemapindex" in xml and depth < 3:
             queue += [(unescape(u.strip()), depth + 1) for u in re.findall(r"<loc>\s*([^<]+?)\s*</loc>", xml)]
@@ -335,8 +365,8 @@ async def read_sitemaps(urls: list[str], session=None, limit=50_000) -> dict[str
             if not loc:
                 continue
             lm = re.search(r"(?is)<lastmod>\s*([^<]+?)\s*</lastmod>", block)
-            out[norm(unescape(loc.group(1)))] = lm.group(1).strip() if lm else ""
-    return out
+            res.urls[norm(unescape(loc.group(1)))] = (lm.group(1).strip() if lm else "", sm)
+    return res
 
 
 def sitemaps_from_robots(robots: str) -> list[str]:

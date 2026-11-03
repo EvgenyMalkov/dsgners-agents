@@ -129,12 +129,38 @@ async def hourly() -> str:
 
 # ---------------- каждые 30 минут: новые страницы ----------------
 
-async def sitemap_urls() -> dict[str, str]:
+async def read_sitemap() -> page.SitemapResult:
     robots = store.get("robots_txt") or ""
     maps = page.sitemaps_from_robots(robots) or [site_url("/sitemap.xml")]
     async with _session() as s:
-        urls = await page.read_sitemaps(maps, s)
-    return {u: lm for u, lm in urls.items() if not ignored(u)}
+        res = await page.read_sitemaps(maps, s)
+    res.urls = {u: v for u, v in res.urls.items() if not ignored(u)}
+    return res
+
+
+async def sitemap_urls() -> dict[str, str]:
+    """Все адреса сайта для обхода: из sitemap, а для не загрузившихся секций — последние известные."""
+    res = await read_sitemap()
+    out = {u: lm for u, (lm, _) in res.urls.items()}
+    for u, lm in store.urls_from_files([f for f, _ in res.failed]).items():
+        out.setdefault(u, lm)
+    return out
+
+
+async def _sitemap_failures(failed: list[tuple[str, str]]) -> str:
+    """Секция sitemap не загрузилась: тревога, только если так 3 проверки подряд (~1,5 часа)."""
+    streak = store.get("sitemap_fail_streak", {})
+    now_failed = {f: why for f, why in failed}
+    streak = {f: streak.get(f, 0) + 1 for f in now_failed}
+    store.put("sitemap_fail_streak", streak)
+    for f, n in streak.items():
+        if n >= 3:
+            await alert(f"sitemap_part:{f}", True, f"sitemap {f} не загружается уже {n} проверки подряд "
+                        f"({now_failed[f]}). Поисковики тоже могут его не дочитать — проверить скорость генерации.")
+    for a in store.active_alerts():
+        if a["key"].startswith("sitemap_part:") and a["key"].split(":", 1)[1] not in now_failed:
+            await alert(a["key"], False, "", f"sitemap {a['key'].split(':', 1)[1]} снова загружается")
+    return (f"не загрузилось секций sitemap: {len(failed)} (повторю через 30 мин)") if failed else ""
 
 
 def _optimized_today() -> int:
@@ -159,23 +185,27 @@ def start_optimize(url: str, rep: page.PageReport, auto: bool) -> str | None:
 
 
 async def new_pages() -> str:
-    urls = await sitemap_urls()
-    if not urls:
-        await alert("sitemap", True, "sitemap не читается или пустой — поисковики хуже находят новые страницы",
+    res = await read_sitemap()
+    fail_note = await _sitemap_failures(res.failed)
+    if not res.files:
+        # не загрузилось вообще ничего — это сбой, а не «все страницы пропали»; ничего не трогаем
+        await alert("sitemap", max(store.get("sitemap_fail_streak", {}).values() or [0]) >= 3,
+                    "sitemap не загружается уже 1,5 часа — поисковики хуже находят новые страницы",
                     "sitemap снова читается")
-        return "sitemap пуст"
+        return "sitemap не загрузился, повторю через 30 мин"
     await alert("sitemap", False, "", "sitemap снова читается")
+    urls = res.urls
     first = not store.known_urls()
-    new, changed, gone = store.upsert_sitemap(urls)
+    new, changed, gone = store.upsert_sitemap(urls, [f for f, _ in res.failed])
     if first:
-        return f"первое знакомство с сайтом: в sitemap {len(urls)} адресов, запомнил"
+        return f"первое знакомство с сайтом: в sitemap {len(urls)} адресов, запомнил. {fail_note}".strip()
     if len(gone) > max(20, len(urls) * 0.2):
-        await say(f"⚠️ SEO: из sitemap пропало {len(gone)} адресов (например: {', '.join(gone[:3])}). "
-                  "Если это не чистка — проверить генерацию sitemap.")
+        await say(f"⚠️ SEO: из sitemap пропало {len(gone)} адресов — их нет уже два успешных прочтения подряд "
+                  f"(например: {', '.join(gone[:3])}). Если это не чистка — проверить генерацию sitemap.")
 
     todo = new[:50] + [u for u in changed if u not in new][:30]
     if not todo:
-        return f"в sitemap {len(urls)} адресов, новых нет"
+        return f"в sitemap {len(urls)} адресов, новых нет. {fail_note}".strip()
 
     reports: list[page.PageReport] = []
     async with _session() as s:
@@ -214,7 +244,7 @@ async def new_pages() -> str:
                 started += 1
     if started:
         notes.append(f"на оформление SEO-агенту: {started}")
-    return f"новых {len(new)}, изменённых {len(changed)}; " + "; ".join(notes)
+    return f"новых {len(new)}, изменённых {len(changed)}; " + "; ".join(notes + ([fail_note] if fail_note else []))
 
 
 # ---------------- каждый день ----------------

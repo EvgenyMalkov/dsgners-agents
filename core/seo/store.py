@@ -23,6 +23,11 @@ def db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS runs(name TEXT PRIMARY KEY, ts REAL, ok INTEGER, note TEXT);
         CREATE TABLE IF NOT EXISTS metrics(day TEXT, key TEXT, value REAL, PRIMARY KEY(day, key));
         """)
+        cols = {r[1] for r in _db.execute("PRAGMA table_info(urls)")}
+        if "sm" not in cols:          # из какого sitemap-файла адрес
+            _db.execute("ALTER TABLE urls ADD COLUMN sm TEXT DEFAULT ''")
+        if "missing" not in cols:     # сколько успешных прочтений подряд адреса нет в sitemap
+            _db.execute("ALTER TABLE urls ADD COLUMN missing INTEGER DEFAULT 0")
         _db.commit()
     return _db
 
@@ -75,24 +80,50 @@ def known_urls() -> dict[str, str]:
     return {r[0]: r[1] or "" for r in db().execute("SELECT url, lastmod FROM urls WHERE in_sitemap=1")}
 
 
-def upsert_sitemap(urls: dict[str, str]) -> tuple[list[str], list[str], list[str]]:
-    """Обновить список адресов из sitemap. Вернёт (новые, изменённые, пропавшие)."""
-    old = {r[0]: (r[1] or "", r[2]) for r in db().execute("SELECT url, lastmod, in_sitemap FROM urls")}
+def upsert_sitemap(urls: dict, failed_files: list[str] = (), confirm_runs: int = 2):
+    """Обновить список адресов из sitemap.
+
+    urls — {адрес: (lastmod, sitemap-файл)}. Адреса из sitemap-файлов, которые сейчас не загрузились (failed_files),
+    пропавшими не считаем. Пропавшим адрес становится, только если его нет confirm_runs успешных прочтений подряд —
+    так разовый сбой сайта или сети не даёт ложной тревоги.
+    Вернёт (новые, изменённые, пропавшие).
+    """
+    old = {r[0]: (r[1] or "", r[2], r[3] or "", r[4] or 0)
+           for r in db().execute("SELECT url, lastmod, in_sitemap, sm, missing FROM urls")}
+    failed = set(failed_files)
     now = time.time()
     new, changed = [], []
-    for u, lm in urls.items():
+    for u, (lm, sm) in urls.items():
         if u not in old:
             new.append(u)
-            db().execute("INSERT INTO urls(url, first_seen, lastmod, in_sitemap) VALUES(?,?,?,1)", (u, now, lm))
+            db().execute("INSERT INTO urls(url, first_seen, lastmod, in_sitemap, sm, missing) VALUES(?,?,?,1,?,0)",
+                         (u, now, lm, sm))
         else:
-            if lm and lm != old[u][0]:
+            if lm and lm != old[u][0] and old[u][1]:
                 changed.append(u)
-            db().execute("UPDATE urls SET lastmod=?, in_sitemap=1 WHERE url=?", (lm, u))
-    gone = [u for u, (_, ins) in old.items() if ins and u not in urls]
-    for u in gone:
-        db().execute("UPDATE urls SET in_sitemap=0 WHERE url=?", (u,))
+            db().execute("UPDATE urls SET lastmod=?, in_sitemap=1, sm=?, missing=0 WHERE url=?", (lm, sm, u))
+    gone = []
+    for u, (_, ins, sm, miss) in old.items():
+        if not ins or u in urls or (sm and sm in failed):
+            continue
+        if failed and not sm:
+            continue        # старый адрес без известного источника — при частичном сбое не трогаем
+        if miss + 1 >= confirm_runs:
+            gone.append(u)
+            db().execute("UPDATE urls SET in_sitemap=0, missing=? WHERE url=?", (miss + 1, u))
+        else:
+            db().execute("UPDATE urls SET missing=? WHERE url=?", (miss + 1, u))
     db().commit()
     return new, changed, gone
+
+
+def urls_from_files(files: list[str]) -> dict[str, str]:
+    """Последние известные адреса из указанных sitemap-файлов (подставляем, когда файл не загрузился)."""
+    if not files:
+        return {}
+    q = ",".join("?" * len(files))
+    return {r[0]: r[1] or "" for r in db().execute(
+        f"SELECT url, lastmod FROM urls WHERE in_sitemap=1 AND sm IN ({q})", list(files))}
 
 
 def save_check(rep):
