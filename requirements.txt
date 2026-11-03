@@ -6,3 +6,4 @@ pillow>=10
 python-dotenv>=1.0
 aiohttp>=3.9
 pypdf>=4
+openpyxl>=3.1

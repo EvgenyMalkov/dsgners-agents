@@ -271,6 +271,13 @@ async def daily() -> str:
                         f"−{100 - indexed * 100 // int(week_ago)}%) — смотреть «Исключённые страницы» в Вебмастере")
         else:
             await alert("indexed_drop", False, "", f"число страниц в поиске восстановилось: {indexed}")
+        try:
+            qs = await apis.wm_queries(28)
+            if qs:
+                store.put("wm_queries", qs)
+                notes.append(f"запросов из Вебмастера: {len(qs)}")
+        except Exception as e:
+            notes.append(f"запросы Вебмастера: ошибка {e}")
         diags = await apis.wm_diagnostics() or []
         fatal = [d["code"] for d in diags if d["severity"] in ("FATAL", "CRITICAL")]
         await alert("wm_critical", bool(fatal), "Вебмастер видит критичные проблемы: " + ", ".join(fatal),
@@ -439,7 +446,7 @@ async def weekly() -> tuple[str, Path | None]:
 
 def status_text() -> str:
     names = {"hourly": "каждый час", "new_pages": "новые страницы", "daily": "ежедневно", "weekly": "раз в неделю",
-             "monthly": "разбор за месяц"}
+             "monthly": "разбор за месяц", "content_plan": "контент-план"}
     lines = [f"🔎 SEO-мониторинг {config.SEO_SITE}"]
     for r in store.runs():
         when = dt.datetime.fromtimestamp(r["ts"]).strftime("%d.%m %H:%M")
@@ -450,6 +457,8 @@ def status_text() -> str:
                  f"{_optimized_today()}/{config.SEO_AUTO_OPTIMIZE_PER_DAY}")
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
     lines.append("IndexNow: " + ("подключён" if config.INDEXNOW_KEY else "нет ключа"))
+    from core.seo import keywords
+    lines.append(f"Вордстат: {keywords.count()} фраз" if keywords.count() else "Вордстат: выгрузок нет (пришли CSV/XLSX с подписью «вордстат»)")
     return "\n".join(lines)
 
 
@@ -537,3 +546,95 @@ async def monthly() -> str:
                    "(«в подборках инструментов — таблица сравнения с ценами в начале»), а не общие слова.\n"
                    "Если данных мало для выводов — так и скажи, правила не выдумывай.\n4. finish.\n\n" + report[:30000])
     return f"статей с трафиком {len(top)}, оформленных агентом {len(ours)}"
+
+
+# ---------------- раз в неделю: контент-план (что писать и что обновлять) ----------------
+
+def _our_titles(limit=3000) -> list[dict]:
+    return [r for r in store.pages_with_titles(limit) if is_content(r["url"])]
+
+
+async def content_plan() -> str:
+    """Собрать данные о спросе и о наших страницах и отдать SEO-агенту на контент-план.
+
+    Источники (что есть — то и используем): запросы Вебмастера (где мы на 4–30 месте, где много показов
+    и мало кликов), Метрика (просевшие статьи), выгрузки Вордстата (спрос, который мы не закрываем),
+    наши заголовки (чтобы не писать дубли) и прошлые темы (чтобы не повторяться).
+    Конкурентов и свежие темы агент смотрит сам через поиск в интернете.
+    """
+    from core.seo import keywords
+    today = dt.date.today()
+    ours = _our_titles()
+    titles = [f"{r['title']} {r['h1']}" for r in ours]
+    L = [f"# Данные для контент-плана — {today:%d.%m.%Y}", ""]
+
+    qs = store.get("wm_queries") or []
+    if not qs and apis.has_yandex():
+        try:
+            qs = await apis.wm_queries(28) or []
+        except Exception as e:
+            L.append(f"_Вебмастер недоступен: {e}_")
+    if qs:
+        near = sorted((q for q in qs if 3.5 < q["pos"] <= 30 and q["shows"] >= 10), key=lambda q: -q["shows"])[:40]
+        if near:
+            L.append("## Запросы, где мы на 4–30 месте (Вебмастер, 4 недели) — доработать или написать отдельную статью")
+            L += [f"- «{q['query']}» — поз. {q['pos']:.1f}, показов {q['shows']}, кликов {q['clicks']}" for q in near]
+            L.append("")
+        lowctr = sorted((q for q in qs if q["pos"] <= 3.5 and q["shows"] >= 50 and q["clicks"] / max(q["shows"], 1) < 0.03),
+                        key=lambda q: -q["shows"])[:15]
+        if lowctr:
+            L.append("## В топ-3, но почти не кликают (нейроответ забирает или плохой сниппет)")
+            L += [f"- «{q['query']}» — поз. {q['pos']:.1f}, показов {q['shows']}, кликов {q['clicks']}" for q in lowctr]
+            L.append("")
+    if apis.has_yandex() and config.METRIKA_COUNTER_ID:
+        try:
+            end = today - dt.timedelta(days=1)
+            cur = await apis.organic_by_page(end - dt.timedelta(days=27), end, 5000) or {}
+            prev = await apis.organic_by_page(end - dt.timedelta(days=55), end - dt.timedelta(days=28), 5000) or {}
+            cur = {page.norm(u): v for u, v in cur.items()}
+            prev = {page.norm(u): v for u, v in prev.items()}
+            tmap = {r["url"]: r["title"] for r in ours}
+            fell = sorted(((u, p, cur.get(u, 0)) for u, p in prev.items()
+                           if is_content(u) and p >= 20 and cur.get(u, 0) < p * 0.75), key=lambda x: x[2] - x[1])[:15]
+            if fell:
+                L.append("## Статьи, которые теряют поисковый трафик (Метрика, 4 недели к 4 неделям) — кандидаты на обновление")
+                L += [f"- {p} → {c} визитов — {tmap.get(u, '')} — {u}" for u, p, c in fell]
+                L.append("")
+            best = sorted(((u, v) for u, v in cur.items() if is_content(u)), key=lambda x: -x[1])[:10]
+            if best:
+                L.append("## Что собирает трафик сейчас (темы и форматы, которые работают)")
+                L += [f"- {v} визитов — {tmap.get(u, '')} — {u}" for u, v in best]
+                L.append("")
+        except Exception as e:
+            L.append(f"_Метрика недоступна: {e}_")
+    if keywords.count():
+        gaps = [k for k in keywords.top(400) if not keywords.covered(k["phrase"], titles)][:60]
+        if gaps:
+            L.append("## Спрос из Вордстата, под который у нас нет страницы (частотность в месяц)")
+            L += [f"- «{k['phrase']}» — {k['freq']}" for k in gaps]
+            L.append("")
+    else:
+        L.append("_Выгрузок Вордстата нет — спрос оценивай по Вебмастеру и поиску; скажи владельцу, какие выгрузки сделать._\n")
+    hist = store.get("content_topics", [])
+    if hist:
+        L.append("## Темы, которые уже брали в работу (не повторять)")
+        L += [f"- {h['date']}: {h['title']}" for h in hist[-40:]]
+        L.append("")
+    L.append(f"## Наши статьи (последние {min(len(ours), 120)} заголовков — чтобы не писать дубли)")
+    L += [f"- {r['title'] or r['h1']} — {r['url']}" for r in ours[:120]]
+    data = "\n".join(L)
+
+    out = config.OUTBOX / "seo-plan" / f"content-data-{today:%Y-%m-%d}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(data, "utf-8")
+    if _start_job:
+        _start_job("seo", f"Контент-план на неделю {today:%d.%m}", "monitor",
+                   f"Составь контент-план на неделю: {config.SEO_TOPICS_PER_WEEK} тем. Используй навык «Контент-план».\n\n"
+                   + data[:40000])
+    return f"данные собраны: запросов {len(qs)}, Вордстат {keywords.count()} фраз, наших статей {len(ours)}"
+
+
+def remember_topics(topics: list[dict]):
+    hist = store.get("content_topics", [])
+    hist += [{"date": f"{dt.date.today():%d.%m}", "title": t.get("title", "")} for t in topics]
+    store.put("content_topics", hist[-200:])

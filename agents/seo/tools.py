@@ -53,6 +53,26 @@ TOOLS = [
         }, "required": ["title", "main_query", "plan"]},
     },
     {
+        "name": "keyword_data",
+        "description": "Данные о спросе по теме: фразы из выгрузок Вордстата с частотами, запросы из Вебмастера "
+                       "(наши позиции, показы, клики) и наши страницы по теме.",
+        "input_schema": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]},
+    },
+    {
+        "name": "propose_topics",
+        "description": "Сдать контент-план: список тем на согласование. После «Ок» владельца по каждой теме "
+                       "автоматически запустится написание плана статьи. После propose_topics — save_document и finish.",
+        "input_schema": {"type": "object", "properties": {"topics": {"type": "array", "items": {
+            "type": "object", "properties": {
+                "kind": {"type": "string", "enum": ["new", "update"]},
+                "title": {"type": "string"},
+                "main_query": {"type": "string"},
+                "url": {"type": "string", "description": "адрес статьи — для update"},
+                "why": {"type": "string", "description": "почему, с цифрами из данных"},
+                "angle": {"type": "string", "description": "чем будет лучше топа"},
+            }, "required": ["kind", "title", "main_query", "why", "angle"]}}}, "required": ["topics"]},
+    },
+    {
         "name": "propose_rules",
         "description": "Предложить новые правила для себя по итогам разбора результатов. После «Ок» владельца "
                        "правила автоматически добавятся в твои правила. Только подтверждённые данными выводы.",
@@ -213,7 +233,39 @@ async def propose_rules(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": f"Предложено правил: {len(rules)}. После «Ок» владельца они вступят в силу."}]
 
 
-HANDLERS = {"submit_plan": submit_plan, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
+async def keyword_data(inp: dict, ctx: Ctx):
+    from core.seo import keywords
+    topic = inp["topic"]
+    out = []
+    ws = keywords.search(topic)
+    out.append("Вордстат: " + ("\n" + "\n".join(f"  «{k['phrase']}» — {k['freq']}/мес" for k in ws[:30])
+                               if ws else ("по теме ничего" if keywords.count() else "выгрузок нет")))
+    t = keywords.stems(topic)
+    qs = [q for q in (store.get("wm_queries") or []) if len(t & keywords.stems(q["query"])) >= min(2, len(t))]
+    qs.sort(key=lambda q: -q["shows"])
+    out.append("Вебмастер (4 недели): " + ("\n" + "\n".join(
+        f"  «{q['query']}» — поз. {q['pos']:.1f}, показов {q['shows']}, кликов {q['clicks']}" for q in qs[:25])
+        if qs else "по теме запросов нет или Вебмастер не подключён"))
+    rel = await related_pages({"topic": topic}, ctx)
+    out.append("Наши страницы по теме:\n" + rel[0]["text"])
+    return [{"type": "text", "text": "\n\n".join(out)}]
+
+
+async def propose_topics(inp: dict, ctx: Ctx):
+    topics = [t for t in inp.get("topics", []) if t.get("title")][:10]
+    ctx.meta["topics"] = topics
+    md = ["# Контент-план", ""]
+    for i, t in enumerate(topics, 1):
+        kind = "Обновить" if t.get("kind") == "update" else "Новая"
+        md += [f"## {i}. {kind}: {t['title']}", f"Запрос: {t.get('main_query', '')}" + (f" · {t['url']}" if t.get("url") else ""),
+               f"Почему: {t.get('why', '')}", f"Угол: {t.get('angle', '')}", ""]
+    (ctx.job_dir / "topics.md").write_text("\n".join(md), "utf-8")
+    if ctx.progress:
+        await ctx.progress(f"контент-план: {len(topics)} тем")
+    return [{"type": "text", "text": f"Тем: {len(topics)}. Теперь save_document «content-plan» с выводами и finish."}]
+
+
+HANDLERS = {"submit_plan": submit_plan, "keyword_data": keyword_data, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
             "validate_jsonld": validate_jsonld}
 
 

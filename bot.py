@@ -38,7 +38,9 @@ HELP = (
     "/seo_scan hourly|new|daily|weekly|monthly — запустить проверку или разбор сейчас\n"
     "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
     "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n"
-    "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n\n"
+    "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n"
+    "/seo_plan — контент-план сейчас (сам приходит по вторникам): что писать и что обновлять по данным\n"
+    "Файл CSV/XLSX из Вордстата — загрузить спрос в базу SEO-шника\n\n"
     "/office — ссылка на ИИ-офис\n"
     "/rules [smm|web|seo] — правила, выученные из твоих правок\n"
     "/spend — расходы на API за месяц\n"
@@ -203,16 +205,40 @@ async def seo_after_approve(job: dict):
         plan_file = next((config.OUTBOX / f for f in job["files"] if f.endswith("/plan.md")), None)
         plan = plan_file.read_text("utf-8") if plan_file and plan_file.exists() else ""
         title = meta.get("title") or job["task"]
-        runner.start_job("seo", f"Статья: {title}", source="telegram", parent=job["id"],
+        kind = "Обновление" if job["task"].startswith("Обновить") else "Статья"
+        runner.start_job("seo", f"{kind}: {title}", source="telegram", parent=job["id"],
                          full_task=f"Статья по утверждённому плану (навык «Написать статью», этап 2).\n\n"
                                    f"Исходная задача: {job['task']}\n\n{plan}")
         for uid in config.OWNER_IDS:
             await BOT.send_message(uid, f"✍️ План принят — SEO-шник пишет статью «{title}». Пришлю текст и SEO-пакет.")
+    if meta.get("topics"):
+        topics = meta["topics"][: config.SEO_TOPICS_PER_WEEK + 3]
+        for t in topics:
+            if t.get("kind") == "update" and t.get("url"):
+                task, body = f"Обновить: {t['title']}", f"Обновить статью {t['url']}"
+            else:
+                task, body = f"Статья: {t['title']}", f"Написать статью «{t['title']}»"
+            runner.start_job("seo", task, source="content_plan", parent=job["id"], full_task=(
+                f"{body}\n\nИспользуй навык «Написать статью» — сейчас этап 1, только план.\n"
+                f"Главный запрос: {t.get('main_query', '')}\nПочему эта тема: {t.get('why', '')}\n"
+                f"Чем будем лучше топа: {t.get('angle', '')}"))
+        seo_monitor.remember_topics(topics)
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, f"🗂 Контент-план принят: {len(topics)} тем. SEO-шник готовит планы статей"
+                                        + (" и сразу пишет тексты." if config.SEO_AUTO_PLANS else " — пришлю по одному на «Ок»."))
     if meta.get("rules"):
         for r in meta["rules"]:
             feedback.add_rule("seo", r, "месячный разбор результатов")
         for uid in config.OWNER_IDS:
             await BOT.send_message(uid, f"📌 Добавил SEO-шнику правил: {len(meta['rules'])}. Посмотреть: /rules seo")
+
+
+@dp.message(Command("seo_plan"))
+async def seo_plan(m: Message):
+    if not is_owner(m):
+        return
+    await m.answer("Собираю данные (Вебмастер, Метрика, Вордстат) — SEO-шник пришлёт контент-план на неделю.")
+    await m.answer(f"🔎 {await seo_scheduler.run('content_plan')}")
 
 
 @dp.message(Command("article"))
@@ -232,8 +258,21 @@ async def article(m: Message):
 async def with_image(m: Message, bot: Bot):
     if not is_owner(m):
         return
+    fname = (m.document.file_name or "").lower() if m.document else ""
+    if m.document and fname.endswith((".csv", ".xlsx", ".xlsm", ".txt")):
+        from core.seo import keywords
+        f = await bot.download(m.document.file_id)
+        try:
+            n = keywords.import_file(fname, f.read(), source=(m.caption or "wordstat")[:40])
+        except Exception as e:
+            await m.answer(f"Не смог прочитать файл: {e}")
+            return
+        await m.answer(f"📥 Вордстат: загрузил {n} фраз, всего в базе {keywords.count()}. "
+                       "SEO-шник учтёт их в контент-плане и статьях." if n else
+                       "Не нашёл в файле пар «фраза — частотность». Пришли выгрузку Вордстата как есть (CSV или XLSX).")
+        return
     if m.document and not (m.document.mime_type or "").startswith("image/"):
-        await m.answer("Пока понимаю только картинки. Документы для агента загружай в офисе → «Знания».")
+        await m.answer("Понимаю картинки и выгрузки Вордстата (CSV/XLSX). Другие документы — в офисе → «Знания».")
         return
     file_id = m.photo[-1].file_id if m.photo else m.document.file_id
     ext = ".jpg" if m.photo else ("." + (m.document.file_name or "x.png").rsplit(".", 1)[-1])
@@ -279,6 +318,10 @@ IMG = (".png", ".jpg", ".jpeg", ".webp")
 async def send_review(job: dict):
     """Готовая работа → владельцам в Telegram: картинки альбомом, документы файлами, посты — превью."""
     if not BOT:
+        return
+    if (config.SEO_AUTO_PLANS and job["agent"] == "seo" and job.get("source") == "content_plan"
+            and (job.get("meta") or {}).get("stage") == "plan"):
+        runner.approve(job["id"])   # план из утверждённого контент-плана — сразу в работу, без согласования
         return
     files = [config.OUTBOX / f for f in job["files"]]
     imgs = [f for f in files if f.suffix.lower() in IMG and f.exists()][:10]
