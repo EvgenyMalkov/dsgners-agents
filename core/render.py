@@ -20,9 +20,17 @@ async ({safe}) => {
   await document.fonts.ready;
   const issues = [];
   const short = s => { s = s.replace(/\s+/g,' ').trim(); return s.length > 40 ? s.slice(0,40)+'…' : s; };
-  // допуск: у плотного line-height «хвосты» букв дают пару лишних пикселей scrollHeight
-  const over = el => { const tol = 2;
-    return el.scrollHeight > el.clientHeight + tol || el.scrollWidth > el.clientWidth + 2; };
+  // переполнение считаем по строкам текста, а не по scrollHeight: у шрифтов с высокими асцендерами
+  // (CoFo: 1.26em) «чернильная» область строки шире line-height и scrollHeight ложно растёт
+  const over = el => {
+    const fs = parseFloat(getComputedStyle(el).fontSize) || 16;
+    const r = document.createRange(); r.selectNodeContents(el);
+    const rs = [...r.getClientRects()].filter(x => x.width > 0);
+    const eb = el.getBoundingClientRect();
+    const bottom = rs.length ? Math.max(...rs.map(x => x.bottom)) : eb.bottom;
+    const lfs = rs.length ? Math.max(...rs.map(x => x.height)) : fs;
+    return (bottom - lfs * 0.12 > eb.bottom + 1) || el.scrollWidth > el.clientWidth + 2;
+  };
 
   // 1. Автоподгонка размера шрифта
   for (const el of document.querySelectorAll('[data-fit]')) {

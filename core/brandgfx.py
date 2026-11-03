@@ -152,13 +152,13 @@ def build(w: int, h: int, *, motifs=None, palette="auto", mode="mix", image=None
 
 
 def font_css() -> str:
-    """CoFo Sona, если файлы шрифта положили в team/fonts/, иначе ближайший бесплатный — Golos Text."""
+    """Фирменный шрифт из team/fonts/: CoFo Sona (по гайдбуку), если нет — CoFo Sans; иначе Golos Text."""
     fdir = config.TEAM / "fonts"
     faces = []
-    for f in sorted(fdir.glob("*")) if fdir.exists() else []:
+    files = [f for f in sorted(fdir.glob("*")) if f.suffix.lower() in (".woff2", ".woff", ".otf", ".ttf")] if fdir.exists() else []
+    sona = [f for f in files if "sona" in f.name.lower()]
+    for f in sona or [f for f in files if "cofo" in f.name.lower()]:
         low = f.name.lower()
-        if f.suffix.lower() not in (".woff2", ".woff", ".otf", ".ttf") or "sona" not in low:
-            continue
         weight = 500 if "medium" in low else 400
         faces.append(f"@font-face{{font-family:'CoFo Sona';src:url('{f.resolve().as_uri()}');font-weight:{weight}}}")
     link = "" if faces else ('<link href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500&display=swap" '
