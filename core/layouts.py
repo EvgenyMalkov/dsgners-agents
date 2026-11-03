@@ -230,4 +230,115 @@ def poster(ctx: dict, W: int, H: int, imgs: list[str | None]) -> str:
     return "".join(out) + TAIL
 
 
-BUILDERS = {"collage": collage, "digest": digest, "poster": poster}
+# ---------------------------------------------------------------- promo («креатив 16»)
+def _card(src, x, y, w, h, rot, W, z=6) -> str:
+    """Карточка интерфейса: белая, скруглённая, с мягкой тенью, картинка — от верха."""
+    return (f'<div class="ph" style="position:absolute;left:{x:.0f}px;top:{y:.0f}px;width:{w:.0f}px;height:{h:.0f}px;'
+            f'transform:rotate({rot:.1f}deg);border-radius:{W * 0.016:.0f}px;overflow:hidden;background:#fff;z-index:{z};'
+            f'box-shadow:0 {W * 0.01:.0f}px {W * 0.03:.0f}px rgba(0,0,0,.18)">'
+            + (f'<img class="photo" src="{escape(src)}" alt="" style="width:100%;height:100%;object-fit:cover;'
+               f'object-position:top center;display:block">' if src else "") + "</div>")
+
+
+def promo(ctx: dict, W: int, H: int, imgs: list[str | None]) -> str:
+    """Слева светлая панель: заголовок и логотип; справа яркая графика и 1–2 карточки интерфейса внахлёст."""
+    rnd = _rnd(f"{ctx.get('title')}|promo")
+    bg = _bg(ctx.get("palette"), "pink")
+    wide = W > H * 1.2
+    lw = W * (0.37 if wide else 1.0)
+    lh = H if wide else H * 0.36
+    pad = W * (0.045 if wide else 0.06)
+    fs = round(W * (0.056 if wide else 0.09))
+    outline = round(min(W, H) * 0.014)
+    out = [_head(W, H, "#F1F1F3")]
+    out.append(f'<div class="t" data-fit data-min="{round(fs * 0.5)}" style="left:{pad:.0f}px;top:{pad:.0f}px;width:{lw - 2 * pad:.0f}px;'
+               f'max-height:{(lh - pad * 2) * (0.62 if wide else 0.7):.0f}px;font-size:{fs}px">{escape(ctx.get("title", ""))}</div>')
+    logo_w = lw * 0.6 if wide else W * 0.32
+    out.append(_logo("#000000", logo_w, pad, (H - pad - logo_w * 21 / 135) if wide else (lh - pad - logo_w * 21 / 135)))
+    gx, gy, gw, gh = (lw, 0, W - lw, H) if wide else (0, lh, W, H - lh)
+    out.append(f'<div style="position:absolute;left:{gx:.0f}px;top:{gy:.0f}px;width:{gw:.0f}px;height:{gh:.0f}px;background:{bg};overflow:hidden">')
+    pals = brandgfx.palettes()
+    pal = next((p for p in pals.values() if p["bg"] == bg), pals["pink"])
+    pairs = [p for p in pal["pairs"]] + [["#F83939", "#FEF014"], ["#FEF014", "#C7B3FF"]]
+    names = (ctx.get("motifs") or ["squiggle", "heart", "zigzag", "stick"])[:4]
+    slots = [(-0.06, -0.08, 0.5), (0.68, 0.06, 0.34), (0.66, 0.55, 0.42), (-0.04, 0.62, 0.32)]
+    m = min(gw, gh)
+    for i, (nm, (fx, fy, fsz)) in enumerate(zip(names, slots)):
+        if nm not in brandgfx.shapes():
+            continue
+        fill, stroke = pairs[i % len(pairs)]
+        sz = m * fsz * 1.4
+        if nm == "zigzag":
+            out.append(brandgfx._svg_shape(nm, gw * fx, gh * fy, sz * 0.75, sz, fill, stroke, outline, -18, z=1))
+        else:
+            out.append(brandgfx._svg_shape(nm, gw * fx, gh * fy, sz, sz, fill, stroke, outline, rnd.uniform(-10, 10), z=1))
+    cw = gw * (0.38 if wide else 0.42)
+    if len(imgs) >= 2:
+        out.append(_card(imgs[0], gw * 0.3, gh * 0.06, cw, gh * 0.4, 0, W, z=5))
+        out.append(_card(imgs[1], gw * 0.2, gh * 0.44, cw * 1.08, gh * 0.62, -3, W, z=6))
+    elif imgs:
+        out.append(_card(imgs[0], gw * 0.24, gh * 0.08, cw * 1.25, gh * 0.95, -2.5, W, z=6))
+    out.append("</div>")
+    return "".join(out) + TAIL
+
+
+# ---------------------------------------------------------------- promo-duo («креатив 9»)
+PILL_COLORS = [("#43C9FE", "#8CFF72"), ("#FF72FF", "#4772FF"), ("#4772FF", "#43C9FE"), ("#F83939", "#FF72FF"), ("#C7B3FF", "#FF72FF")]
+
+
+def promo_duo(ctx: dict, W: int, H: int, imgs: list[str | None]) -> str:
+    """Две скруглённые панели: синяя — логотип, шейпы, заголовок; лаймовая — карточка интерфейса и плашки-глаголы."""
+    rnd = _rnd(f"{ctx.get('title')}|duo")
+    bgL = _bg(ctx.get("palette"), "blue")
+    bgR = "#D5F839" if bgL != "#D5F839" else "#4772FF"
+    wide = W > H * 1.2
+    gap = W * 0.012
+    if wide:
+        pw, ph = (W - 3 * gap) / 2, H - 2 * gap
+        L, R = (gap, gap), (2 * gap + pw, gap)
+    else:
+        pw, ph = W - 2 * gap, (H - 3 * gap) / 2
+        L, R = (gap, gap), (gap, 2 * gap + ph)
+    rad = min(pw, ph) * 0.06
+    fg = text_on(bgL)
+    outline = round(min(W, H) * 0.012)
+    out = [_head(W, H, "#FFFFFF")]
+    out.append(f'<div style="position:absolute;left:{L[0]:.0f}px;top:{L[1]:.0f}px;width:{pw:.0f}px;height:{ph:.0f}px;'
+               f'border-radius:{rad:.0f}px;background:{bgL};overflow:hidden">')
+    pals = brandgfx.palettes()
+    pal = next((p for p in pals.values() if p["bg"] == bgL), pals["blue"])
+    fill, stroke = pal["pairs"][0]
+    m = min(pw, ph)
+    out.append(brandgfx._svg_shape("cloud", -m * 0.12, m * 0.18, m * 0.4, m * 0.4, fill, stroke, outline, 0, z=1))
+    out.append(brandgfx._svg_shape("cursor", m * 0.22, m * 0.42, m * 0.2, m * 0.2, pal["pairs"][1][0], pal["pairs"][1][1], outline, 8, z=2))
+    out.append(brandgfx._svg_shape("zigzag", pw * 0.6, -ph * 0.04, pw * 0.42, ph * 0.72, fill, pal["pairs"][1][0], outline, -12, z=1))
+    pad = m * 0.07
+    out.append(_logo(fg, pw * 0.34, pad, pad))
+    fs = round(m * 0.1)
+    out.append(f'<div class="t" data-fit data-min="{round(fs * 0.5)}" style="left:{pad:.0f}px;bottom:{pad:.0f}px;width:{pw - 2 * pad:.0f}px;'
+               f'max-height:{ph * 0.36:.0f}px;font-size:{fs}px;color:{fg};z-index:5">{escape(ctx.get("title", ""))}</div>')
+    out.append("</div>")
+    out.append(f'<div style="position:absolute;left:{R[0]:.0f}px;top:{R[1]:.0f}px;width:{pw:.0f}px;height:{ph:.0f}px;'
+               f'border-radius:{rad:.0f}px;background:{bgR};overflow:hidden">')
+    cw, ch = pw * 0.48, ph * 0.72
+    src = imgs[0] if imgs else None
+    out.append(f'<div class="ph" style="position:absolute;left:{(pw - cw) / 2:.0f}px;top:{(ph - ch) / 2:.0f}px;width:{cw:.0f}px;'
+               f'height:{ch:.0f}px;border-radius:{rad * 0.6:.0f}px;background:#fff;border:{outline:.0f}px solid #fff;overflow:hidden;z-index:3">'
+               + (f'<img class="photo" src="{escape(src)}" alt="" style="width:100%;height:100%;object-fit:cover;object-position:top;'
+                  f'display:block;border-radius:{rad * 0.4:.0f}px">' if src else "") + "</div>")
+    tags = [t for t in (ctx.get("tags") or ["Публикуй", "Читай", "Обсуждай", "Вдохновляйся", "Спрашивай"]) if t][:5]
+    # (сторона, отступ от края в долях ширины, top, поворот): плашка может уходить за край,
+    # но текст внутри неё — нет (поля плашки 0.8em больше заступа)
+    spots = [("r", 0.06, 0.06, -8), ("l", -0.03, 0.24, 4), ("r", -0.03, 0.38, 6), ("r", -0.03, 0.68, -7), ("l", -0.03, 0.84, 9)]
+    pfs = round(m * 0.065)
+    for i, (t, (side, fx, fy, rot)) in enumerate(zip(tags, spots)):
+        pb, ps = PILL_COLORS[i % len(PILL_COLORS)]
+        pos = f"left:{pw * fx:.0f}px" if side == "l" else f"right:{pw * fx:.0f}px"
+        out.append(f'<div class="s" data-over style="{pos};top:{ph * fy:.0f}px;font-size:{pfs}px;padding:{pfs * 0.35:.0f}px {pfs * 0.8:.0f}px;'
+                   f'border-radius:999px;background:{pb};color:{text_on(pb)};box-shadow:0 0 0 {outline:.0f}px {ps};white-space:nowrap;'
+                   f'transform:rotate({rot + rnd.uniform(-2, 2):.0f}deg);z-index:6;overflow:visible">{escape(t)}</div>')
+    out.append("</div>")
+    return "".join(out) + TAIL
+
+
+BUILDERS = {"collage": collage, "digest": digest, "poster": poster, "promo": promo, "promo-duo": promo_duo}

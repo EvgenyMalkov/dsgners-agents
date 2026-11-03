@@ -140,6 +140,11 @@ pre.cap{font:13px/1.5 var(--f-mono);max-height:50vh;overflow:auto}
 .docv pre{margin:0 10px 10px}
 .post{display:flex;flex-direction:column;gap:6px}.ph2{font-size:13px;color:var(--muted)}
 .skl{display:flex;flex-direction:column;gap:8px}
+.tplg{display:grid;grid-template-columns:1fr;gap:12px}
+.tplc{display:flex;flex-direction:column;gap:4px;text-align:left;font:inherit;color:inherit;background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:8px;cursor:pointer}
+.tplimg{display:block;border-radius:6px;overflow:hidden;background:var(--line);min-height:120px}
+.tplimg img{width:100%;max-height:260px;object-fit:contain;display:block;background:#2a2a2a}
+.tpln{font:600 14px var(--f-mono)}.tplm{font-size:12px;color:var(--muted)}.tplu{font-size:13px;line-height:1.35}
 .ski{border:1px solid var(--line);border-radius:10px;background:var(--bg);padding:10px 12px;display:flex;flex-direction:column;gap:6px}
 .ski.off{opacity:.55}
 .ski .top{display:flex;gap:8px;align-items:center;justify-content:space-between}
@@ -191,11 +196,13 @@ pre.cap{font:13px/1.5 var(--f-mono);max-height:50vh;overflow:auto}
         <button class="tab" role="tab" data-tab="history" aria-selected="false">История <span class="cnt" id="histCnt" hidden></span></button>
         <button class="tab" role="tab" data-tab="know" aria-selected="false" id="knowTab">Знания</button>
         <button class="tab" role="tab" data-tab="skills" aria-selected="false" id="skillsTab">Навыки</button>
+        <button class="tab" role="tab" data-tab="tpl" aria-selected="false" id="tplTab">Шаблоны</button>
       </div>
       <div class="panel" id="pFeed"><ul class="log" id="log"></ul></div>
       <div class="panel" id="pHistory" hidden><div class="jobs" id="jobs"></div></div>
       <div class="panel" id="pKnow" hidden><div class="kn" id="kn"></div></div>
       <div class="panel" id="pSkills" hidden><div class="kn" id="sk"></div></div>
+      <div class="panel" id="pTpl" hidden><div class="kn" id="tpl"></div></div>
       <form class="ask" id="askForm" hidden>
         <textarea id="askInput" rows="1" aria-label="Задача агенту" placeholder="Задача…"></textarea>
         <button>Дать</button>
@@ -577,6 +584,31 @@ $('kn').addEventListener('change', async ev => {
   } catch (e) { toast(e.message); }
 });
 
+// ---------- шаблоны ----------
+let tplList = null;
+async function loadTpl(){
+  const el = $('tpl');
+  if (!tplList){ el.innerHTML = '<p class="hint">Загружаю…</p>';
+    try { tplList = await api('/api/templates'); } catch (e) { el.innerHTML = `<p class="hint">${esc(e.message)}</p>`; return; } }
+  el.innerHTML = `<p class="hint">Шаблоны, из которых графический дизайнер собирает визуалы. Превью — на демо-данных
+    (условные фото и экраны). В задаче можно прямо назвать шаблон: «сделай digest…», «витриной showcase…».</p>
+    <div class="tplg">${tplList.map(t => `
+      <button class="tplc" type="button" data-tpl="${esc(t.name)}">
+        <span class="tplimg"><img src="/tpl/${encodeURIComponent(t.name)}.png" alt="" loading="lazy"></span>
+        <span class="tpln">${esc(t.name)}</span>
+        <span class="tplm">${t.size ? t.size.join('×') : ''}${t.formats.length ? ' · ' + esc(t.formats.join(', ')) : ''}</span>
+        <span class="tplu">${esc(t.use)}</span>
+      </button>`).join('')}</div>`;
+}
+$('tpl').addEventListener('click', ev => {
+  const b = ev.target.closest('[data-tpl]'); if (!b) return;
+  const t = tplList.find(x => x.name === b.dataset.tpl);
+  $('dlgBody').innerHTML = `<div class="dh"><div><h2>${esc(t.name)}</h2><p class="hint" style="margin-top:6px">${esc(t.use)}</p></div>
+    <button class="btn" data-close>✕</button></div><div class="db"><img src="/tpl/${encodeURIComponent(t.name)}.png" alt="" style="width:100%;border-radius:8px"></div>`;
+  const dlg = $('dlg'); if (!dlg.open) dlg.showModal();
+  dlg.querySelector('[data-close]').onclick = () => dlg.close();
+});
+
 // ---------- навыки ----------
 let skList = [];
 async function loadSkills(){
@@ -648,8 +680,8 @@ $('sk').addEventListener('change', async ev => {
 function setTab(t){
   tab = t;
   document.querySelectorAll('.tab').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === t)));
-  $('pFeed').hidden = t !== 'feed'; $('pHistory').hidden = t !== 'history'; $('pKnow').hidden = t !== 'know'; $('pSkills').hidden = t !== 'skills';
-  if (t === 'feed') renderLog(); if (t === 'history') renderJobs(); if (t === 'know') loadKnow(); if (t === 'skills') loadSkills();
+  $('pFeed').hidden = t !== 'feed'; $('pHistory').hidden = t !== 'history'; $('pKnow').hidden = t !== 'know'; $('pSkills').hidden = t !== 'skills'; $('pTpl').hidden = t !== 'tpl';
+  if (t === 'feed') renderLog(); if (t === 'history') renderJobs(); if (t === 'know') loadKnow(); if (t === 'skills') loadSkills(); if (t === 'tpl') loadTpl();
 }
 document.querySelectorAll('.tab').forEach(b => b.onclick = () => setTab(b.dataset.tab));
 function renderSide(){
@@ -660,7 +692,7 @@ function renderSide(){
   if (a){ const st = stOf(a); stEl.className = 'status st-' + st; stEl.textContent = ST_RU[st]; }
   $('selTask').textContent = a ? (a.inactive ? 'Этот агент ещё в разработке.' : a.task || 'Без задачи') : 'Лента и история всех агентов. Нажми на робота, чтобы открыть его.';
   $('allBtn').hidden = !a;
-  $('knowTab').hidden = !a; $('skillsTab').hidden = !a;
+  $('knowTab').hidden = !a; $('skillsTab').hidden = !a; $('tplTab').hidden = !a || a.id !== 'designer';
   $('askForm').hidden = !a || a.inactive;
   $('askInput').placeholder = 'Опиши задачу… (Ctrl+Enter — отправить)';
 }
@@ -668,7 +700,7 @@ function select(id){
   selected = id;
   TEAM.forEach(t => A[t.id].chip.setAttribute('aria-pressed', String(t.id === id)));
   renderSide();
-  if (!id && (tab === 'know' || tab === 'skills')) setTab('feed'); else setTab(tab);
+  if ((!id && ['know','skills','tpl'].includes(tab)) || (tab === 'tpl' && id !== 'designer')) setTab('feed'); else setTab(tab);
 }
 $('allBtn').onclick = () => select(null);
 $('pendPill').onclick = () => { setTab('history'); };

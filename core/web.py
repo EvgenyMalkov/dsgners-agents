@@ -247,6 +247,24 @@ async def sk_upload(req):
     return web.json_response({"slug": slug, "skills": skills.list_skills(a)})
 
 
+# ---------- шаблоны дизайнера ----------
+async def tpl_list(req):
+    from core.render import templates_index
+    idx = templates_index()
+    return web.json_response([{"name": k, "use": v.get("use", ""), "size": v.get("size"), "kind": v.get("kind", "card"),
+                               "formats": list((v.get("formats") or {}).keys())}
+                              for k, v in idx.items() if not k.startswith("_")])
+
+
+async def tpl_preview(req):
+    from core import tpl_samples
+    try:
+        p = await tpl_samples.preview(req.match_info["name"])
+    except KeyError:
+        raise web.HTTPNotFound()
+    return web.FileResponse(p, headers={"Cache-Control": "max-age=300"})
+
+
 def make_app() -> web.Application:
     app = web.Application(middlewares=[auth], client_max_size=16 * 1024 * 1024)
     app.router.add_get("/", page)
@@ -263,6 +281,8 @@ def make_app() -> web.Application:
     app.router.add_post("/api/agent/{agent}/upload", k_upload)
     app.router.add_post("/api/agent/{agent}/delete", k_delete)
     app.router.add_get("/kfiles/{agent}/{tail:.+}", kfile)
+    app.router.add_get("/api/templates", tpl_list)
+    app.router.add_get("/tpl/{name}.png", tpl_preview)
     app.router.add_get("/api/agent/{agent}/skills", sk_list)
     app.router.add_post("/api/agent/{agent}/skills", sk_save)
     app.router.add_post("/api/agent/{agent}/skills-upload", sk_upload)

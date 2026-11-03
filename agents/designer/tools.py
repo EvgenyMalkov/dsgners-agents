@@ -41,6 +41,7 @@ TOOLS = [
                         "format": {"type": "string", "enum": ["16:9", "4:5", "square", "story"]},
                         "images": {"type": "array", "items": {"type": "string"}},
                         "caption": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
                         "badges": {"type": "array", "items": {"type": "object", "properties": {
                             "image": {"type": "string"}, "text": {"type": "string"}, "label": {"type": "string"}}}},
                         "hide_logo": {"type": "boolean"},

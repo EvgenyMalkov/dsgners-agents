@@ -63,7 +63,7 @@ async ({safe}) => {
       if (vis.right <= vis.left || vis.bottom <= vis.top) continue;
       const m = Math.min(vis.left - cv.left, cv.right - vis.right, vis.top - cv.top, cv.bottom - vis.bottom);
       const key = short(el.innerText);
-      if (m < safe && !seen.has('e'+key)) { seen.add('e'+key); issues.push(`«${key}» в ${Math.round(m)}px от края, нужно не меньше ${safe}px.`); }
+      if (m < safe && !el.closest('[data-over]') && !seen.has('e'+key)) { seen.add('e'+key); issues.push(`«${key}» в ${Math.round(m)}px от края, нужно не меньше ${safe}px.`); }
       if (!el.closest('[data-over]') && blockers.some(b => hit(vis, b)) && !seen.has('h'+key)) { seen.add('h'+key); issues.push(`«${key}» наезжает на фигуру или фото.`); }
     }
   }
@@ -142,7 +142,7 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     ctx = {k: v for k, v in data.items() if v not in (None, "", [])}
     if meta.get("kind") == "showcase":
         return await _render_showcase(template, meta, ctx, out_png)
-    if meta.get("kind") in ("collage", "digest", "poster"):
+    if meta.get("kind") in ("collage", "digest", "poster", "promo", "promo-duo"):
         return await _render_layout(meta, ctx, out_png)
     for k in ("title", "subtitle", "rubric", "date", "author"):
         if isinstance(ctx.get(k), str):
