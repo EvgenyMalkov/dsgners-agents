@@ -67,26 +67,51 @@ async def _get(path: str, **params) -> dict:
 KINDS = {"FRAME", "SECTION", "COMPONENT", "COMPONENT_SET", "GROUP", "INSTANCE"}
 
 
-async def _nodes(key: str) -> list[dict]:
+def _cached(key):
     hit = _cache.get(key)
-    if hit and time.time() - hit[0] < CACHE_TTL:
-        return hit[1]
-    data = await _get(f"/files/{key}", depth=4)
-    out = []
+    return hit[1] if hit and time.time() - hit[0] < CACHE_TTL else None
 
-    def walk(node, page, path, depth):
-        for ch in node.get("children", []) or []:
-            if ch.get("type") in KINDS:
-                bb = ch.get("absoluteBoundingBox") or {}
-                out.append({"id": ch["id"], "name": ch.get("name", ""), "type": ch["type"], "page": page,
-                            "path": " / ".join(path + [ch.get("name", "")]),
-                            "w": round(bb.get("width", 0)), "h": round(bb.get("height", 0))})
-            if depth < 3:
-                walk(ch, page, path + [ch.get("name", "")], depth + 1)
 
-    for pg in data.get("document", {}).get("children", []):
-        walk(pg, pg.get("name", ""), [pg.get("name", "")], 1)
-    _cache[key] = (time.time(), out)
+async def _pages(key: str) -> list[dict]:
+    """Страницы файла (лёгкий запрос depth=1). Разделители вида «----» пропускаем."""
+    if (c := _cached(("pages", key))) is not None:
+        return c
+    data = await _get(f"/files/{key}", depth=1)
+    pages = [{"id": p["id"], "name": p.get("name", "")} for p in data.get("document", {}).get("children", [])
+             if re.search(r"[\wА-Яа-яЁё]", p.get("name", ""))]
+    _cache[("pages", key)] = (time.time(), pages)
+    return pages
+
+
+async def _page_nodes(key: str, pages: list[dict]) -> list[dict]:
+    """Фреймы внутри выбранных страниц (до 2 уровней вложенности), с кешем по странице."""
+    out, need = [], []
+    for p in pages:
+        c = _cached(("page", key, p["id"]))
+        if c is None:
+            need.append(p)
+        else:
+            out += c
+    for i in range(0, len(need), 8):
+        chunk = need[i:i + 8]
+        data = await _get(f"/files/{key}/nodes", ids=",".join(p["id"] for p in chunk), depth=3)
+        for p in chunk:
+            doc = ((data.get("nodes") or {}).get(p["id"]) or {}).get("document") or {}
+            items = []
+
+            def walk(node, path, depth):
+                for ch in node.get("children", []) or []:
+                    if ch.get("type") in KINDS:
+                        bb = ch.get("absoluteBoundingBox") or {}
+                        items.append({"id": ch["id"], "name": ch.get("name", ""), "type": ch["type"],
+                                      "page": p["name"], "path": " / ".join(path + [ch.get("name", "")]),
+                                      "w": round(bb.get("width", 0)), "h": round(bb.get("height", 0))})
+                    if depth < 2:
+                        walk(ch, path + [ch.get("name", "")], depth + 1)
+
+            walk(doc, [p["name"]], 1)
+            _cache[("page", key, p["id"])] = (time.time(), items)
+            out += items
     return out
 
 
@@ -117,28 +142,37 @@ def _default_file() -> str:
     return "dev" if "dev" in fs else next(iter(fs))
 
 
+def _score(text: str, words: list[str]) -> int:
+    t = text.lower()
+    return sum(1 for w in words if w in t)
+
+
 async def find(inp: dict, ctx: Ctx):
     file = inp.get("file") or _default_file()
     key = _key(file)
     if ctx.progress:
         await ctx.progress(f"ищу в Figma ({file}): {inp.get('query', '')[:40]}")
-    nodes = await _nodes(key)
-    words = [w for w in re.split(r"\s+", (inp.get("query") or "").lower()) if w]
-    if words:
-        scored = []
-        for n in nodes:
-            hay = n["path"].lower()
-            score = sum(1 for w in words if w in hay) + sum(2 for w in words if w in n["name"].lower())
-            if score:
-                scored.append((score, -len(n["path"]), n))
-        hits = [n for _, _, n in sorted(scored, key=lambda x: (-x[0], x[1]))][:25]
-    else:
-        hits = [n for n in nodes if n["path"].count(" / ") <= 1][:40]
+    pages = await _pages(key)
+    words = [w[:6] for w in re.split(r"[\s,.]+", (inp.get("query") or "").lower()) if len(w) > 1]
+    if not words:
+        lines = [f"- страница {p['id']} | {p['name']}" for p in pages]
+        return [{"type": "text", "text": f"Файл «{file}», страницы:\n" + "\n".join(lines) +
+                 "\nИщи по названию фичи — найду фреймы внутри страницы."}]
+    # 1) страницы, подходящие по названию; 2) если таких нет — первые 16 страниц файла
+    ranked = sorted(pages, key=lambda p: -_score(p["name"], words))
+    target = [p for p in ranked if _score(p["name"], words)][:3] or pages[:16]
+    nodes = await _page_nodes(key, target)
+    scored = []
+    for n in nodes:
+        sc = _score(n["path"], words) + 2 * _score(n["name"], words)
+        top = n["path"].count(" / ") == 1  # фреймы верхнего уровня страницы — главные экраны
+        scored.append((sc + (1 if top else 0), -len(n["path"]), n))
+    hits = [n for sc, _, n in sorted(scored, key=lambda x: (-x[0], x[1])) if sc > 0][:30]
     if not hits:
-        return [{"type": "text", "text": f"В файле «{file}» ничего не нашлось по «{inp.get('query')}». "
-                                         f"Попробуй другие слова или пустой запрос — покажу разделы."}]
+        return [{"type": "text", "text": f"В файле «{file}» по «{inp.get('query')}» ничего. "
+                                         f"Вызови figma_find с пустым query — покажу список страниц."}]
     lines = [f"- {n['id']} | {n['type']} | {n['w']}×{n['h']} | {n['path']}" for n in hits]
-    return [{"type": "text", "text": f"Файл «{file}». Найдено:\n" + "\n".join(lines)}]
+    return [{"type": "text", "text": f"Файл «{file}». Найдено (id | тип | размер | страница / путь):\n" + "\n".join(lines)}]
 
 
 async def export(inp: dict, ctx: Ctx):
@@ -177,5 +211,7 @@ def system_note() -> str:
     if not config.env("FIGMA_TOKEN", ""):
         return ""
     return ("# Figma\nУ тебя есть доступ на чтение к файлам Figma: " + ", ".join(files()) +
-            ". «dev» — макеты новых фич сайта, «brand» — гайдбук. Нужен экран фичи или элемент интерфейса — "
-            "найди его (figma_find) и выгрузи (figma_export), не выдумывай интерфейс.")
+            ". «dev» — макеты сайта DSGNERS 3.0: каждая фича — отдельная страница (напр. «Совместные публикации "
+            "(коллабы)», «AI-поиск», «Бро-подписка», «Онбординг новых пользователей»), разделы сайта — страницы с эмодзи "
+            "(«🏚 Лента», «✏️ Редактор», «🚹 Профиль»…). «brand» — гайдбук. Нужен экран фичи — найди (figma_find по "
+            "названию фичи) и выгрузи (figma_export) самый подходящий фрейм верхнего уровня; не выдумывай интерфейс.")
