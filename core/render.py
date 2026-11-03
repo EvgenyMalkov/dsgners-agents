@@ -21,7 +21,7 @@ async ({safe}) => {
   const issues = [];
   const short = s => { s = s.replace(/\s+/g,' ').trim(); return s.length > 40 ? s.slice(0,40)+'…' : s; };
   // допуск: у плотного line-height «хвосты» букв дают пару лишних пикселей scrollHeight
-  const over = el => { const tol = Math.max(3, parseFloat(getComputedStyle(el).fontSize) * 0.2);
+  const over = el => { const tol = 2;
     return el.scrollHeight > el.clientHeight + tol || el.scrollWidth > el.clientWidth + 2; };
 
   // 1. Автоподгонка размера шрифта
@@ -36,7 +36,9 @@ async ({safe}) => {
 
   // 2. Отступы от краёв и наезды на графику (по реальным строкам текста)
   const cv = document.getElementById('canvas').getBoundingClientRect();
-  const blockers = [...document.querySelectorAll('.c1,.c2,.r1,.photo')].map(e => e.getBoundingClientRect());
+  const gfxEl = document.querySelector('.gfx'); const gr = gfxEl ? gfxEl.getBoundingClientRect() : null;
+  const clip = r => gr ? {left: Math.max(r.left, gr.left), right: Math.min(r.right, gr.right), top: Math.max(r.top, gr.top), bottom: Math.min(r.bottom, gr.bottom)} : r;
+  const blockers = [...document.querySelectorAll('.shape-el,.photo')].map(e => clip(e.getBoundingClientRect())).filter(r => r.right > r.left && r.bottom > r.top);
   const hit = (a, b) => a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
   const walker = document.createTreeWalker(document.getElementById('canvas'), NodeFilter.SHOW_TEXT);
   const seen = new Set();
@@ -75,7 +77,7 @@ def templates_index() -> dict:
     return json.loads((config.AGENTS / "designer" / "templates" / "index.json").read_text("utf-8"))
 
 
-def design_system() -> dict:
+def design_system() -> dict:  # noqa — оставлено для совместимости
     return json.loads((config.TEAM / "design-system.json").read_text("utf-8"))
 
 
@@ -101,15 +103,36 @@ def _image_src(value: str | None) -> str | None:
     return p.resolve().as_uri()
 
 
+def _geometry(meta: dict, layout: str) -> dict:
+    W, H = meta["size"]
+    g = meta["geo"]
+    out = {"geo": g}
+    if g["split"] == "h":  # инфоблок слева/справа
+        iw = g["info"]
+        left = layout != "info-right"
+        out.update(ix=0 if left else W - iw, iy=0, iw=iw, ih=H, gx=iw if left else 0, gy=0, gw=W - iw, gh=H,
+                   ipt=g["pad"], ipb=g["pad"])
+    else:
+        ih = g["info"]
+        top = layout == "info-top"
+        out.update(ix=0, iy=0 if top else H - ih, iw=W, ih=ih, gx=0, gy=ih if top else 0, gw=W, gh=H - ih)
+        st, sb = g.get("safe_top", 0), g.get("safe_bottom", 0)
+        out.update(ipt=max(g["pad"], st if top else 0) if top else g["pad"],
+                   ipb=g["pad"] if top else max(g["pad"], sb))
+    return out
+
+
 async def render(template: str, data: dict, out_png: Path) -> list[str]:
     """Рендерит шаблон в PNG, возвращает список найденных проблем (пустой — всё чисто)."""
+    from core import brandgfx
+
     idx = templates_index()
-    if template not in idx:
-        return [f"Нет шаблона «{template}». Есть: {', '.join(idx)}"]
+    if template not in idx or template.startswith("_"):
+        return [f"Нет шаблона «{template}». Есть: {', '.join(k for k in idx if not k.startswith('_'))}"]
     meta = idx[template]
     W, H = meta["size"]
-    ctx = {k: v for k, v in data.items() if v not in (None, "")}
-    for k in ("title", "subtitle", "rubric", "cta"):
+    ctx = {k: v for k, v in data.items() if v not in (None, "", [])}
+    for k in ("title", "subtitle", "rubric", "date", "author"):
         if isinstance(ctx.get(k), str):
             ctx[k] = typograf(ctx[k])
     if isinstance(ctx.get("items"), list):
@@ -118,8 +141,20 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     if isinstance(tb, dict):
         ctx["table"] = {"columns": [typograf(str(c)) for c in tb.get("columns", [])][:4],
                         "rows": [[typograf(str(v)) for v in r] for r in tb.get("rows", [])][:6]}
-    ctx["image"] = _image_src(ctx.get("image"))
-    html = _env.get_template(f"{template}.html").render(ds=design_system(), W=W, H=H, **ctx)
+    image = _image_src(ctx.pop("image", None))
+    ctx["author_photo"] = _image_src(ctx.get("author_photo"))
+    geo = _geometry(meta, ctx.get("layout", "info-left" if meta["geo"]["split"] == "h" else ""))
+    motifs = ctx.get("motifs")
+    if isinstance(motifs, str):
+        motifs = [m.strip() for m in motifs.replace(";", ",").split(",") if m.strip()]
+    gbg, gfx = brandgfx.build(geo["gw"], geo["gh"], motifs=motifs, palette=ctx.get("palette", "auto"),
+                              mode=ctx.get("graphic", "mix"), image=image, outline=meta["geo"]["outline"],
+                              seed=f"{ctx.get('title', '')}|{template}|{ctx.get('palette', '')}",
+                              image_shape=ctx.get("image_shape", "rounded"))
+    html = _env.get_template(f"{template}.html").render(
+        W=W, H=H, gfx=gfx, gbg=gbg, font_css=brandgfx.font_css(),
+        logo_svg=(config.TEAM / "assets" / "logo.svg").read_text("utf-8"),
+        tag_bg=ctx.get("tag_color") or "#8CFF72", **geo, **{k: v for k, v in ctx.items() if k not in geo})
 
     out_png = out_png.resolve()
     out_png.parent.mkdir(parents=True, exist_ok=True)

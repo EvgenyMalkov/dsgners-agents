@@ -1,28 +1,47 @@
 <!doctype html>
 <html lang="ru"><head><meta charset="utf-8">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-{% set t = ds.themes[theme or 'dark'] if (theme or 'dark') in ds.themes else ds.themes['dark'] %}
+{{ font_css|safe }}
+{% set g = geo %}
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 html,body{background:#808080}
-#canvas{position:relative;overflow:hidden;width:{{ W }}px;height:{{ H }}px;
-  background:{{ t.bg }};color:{{ t.fg }};font-family:'Inter',system-ui,sans-serif;
-  font-feature-settings:"ss01","cv11";-webkit-font-smoothing:antialiased}
-.badge{display:inline-block;align-self:flex-start;background:{{ t.badge_bg }};color:{{ t.badge_fg }};
-  font-weight:700;border-radius:999px;white-space:nowrap}
-.title{font-weight:800;letter-spacing:-.035em;line-height:1.02;overflow:hidden;text-wrap:balance;hyphens:manual}
-.sub{color:{{ t.muted }};line-height:1.38;font-weight:500;overflow:hidden}
-.logo{font-weight:800;letter-spacing:-.02em;white-space:nowrap}
-.cta{display:inline-block;align-self:flex-start;background:{{ t.badge_bg }};color:{{ t.badge_fg }};font-weight:700;white-space:nowrap}
-.col{position:absolute;display:flex;flex-direction:column;min-height:0}
+#canvas{position:relative;overflow:hidden;width:{{ W }}px;height:{{ H }}px;background:#FFFFFF;color:#000;
+  font-family:'CoFo Sona','Golos Text','Inter',system-ui,sans-serif;font-weight:400;-webkit-font-smoothing:antialiased}
+.gfx{position:absolute;overflow:hidden;left:{{ gx }}px;top:{{ gy }}px;width:{{ gw }}px;height:{{ gh }}px;background:{{ gbg }}}
+.info{position:absolute;left:{{ ix }}px;top:{{ iy }}px;width:{{ iw }}px;height:{{ ih }}px;background:#FFFFFF;
+  padding:{{ ipt }}px {{ g.pad }}px {{ ipb }}px;display:flex;flex-direction:column;gap:{{ (g.pad * 0.55)|round|int }}px;min-height:0}
+.top{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:{{ (g.tag * 1.9)|round|int }}px}
+.tags{display:flex;gap:8px;margin-left:auto}
+.tag{font-size:{{ g.tag }}px;line-height:1;padding:{{ (g.tag*0.32)|round|int }}px {{ (g.tag*0.5)|round|int }}px;border-radius:{{ (g.tag*0.25)|round|int }}px;
+  background:{{ tag_bg }};color:#000;white-space:nowrap;letter-spacing:-0.01em}
+.author{display:inline-flex;align-items:center;gap:{{ (g.tag*0.45)|round|int }}px;background:#9B50FF;color:#fff;font-size:{{ g.tag }}px;line-height:1;
+  padding:{{ (g.tag*0.28)|round|int }}px {{ (g.tag*0.6)|round|int }}px {{ (g.tag*0.28)|round|int }}px {{ (g.tag*0.28)|round|int }}px;border-radius:{{ (g.tag*0.4)|round|int }}px;white-space:nowrap}
+.author img{width:{{ (g.tag*1.5)|round|int }}px;height:{{ (g.tag*1.5)|round|int }}px;border-radius:{{ (g.tag*0.3)|round|int }}px;object-fit:cover;display:block}
+.author.noimg{padding-left:{{ (g.tag*0.6)|round|int }}px}
+.title{flex:0 1 auto;min-height:0;padding-bottom:.08em;font-size:{{ g.title[0] }}px;line-height:1;letter-spacing:-0.025em;font-weight:400;overflow:hidden;text-wrap:balance;hyphens:manual}
 .grow{flex:1 1 auto;min-height:0}
-.c1,.c2,.c3,.r1{position:absolute}
-.c1{border-radius:50%;background:{{ t.a1 }}}
-.r1{background:{{ t.a2 }}}
-.c2{border-radius:50%;background:{{ t.a3 }}}
-.photo{position:absolute;object-fit:cover;display:block;background:{{ t.muted }}}
+.bot{display:flex;justify-content:space-between;align-items:flex-end;gap:24px}
+.sub{font-size:{{ g.sub }}px;line-height:1.05;letter-spacing:-0.01em;max-width:62%;overflow:hidden;max-height:{{ (g.sub*3.3)|round|int }}px}
+.logo{width:{{ g.logo }}px;margin-left:auto;flex:none;color:#000;line-height:0}
+.logo svg{width:100%;height:auto;display:block}
 {% block css %}{% endblock %}
 </style></head>
-<body><div id="canvas" class="{% if image %}has-image{% endif %}">
-{% block body %}{% endblock %}
+<body><div id="canvas">
+<div class="gfx">{{ gfx|safe }}</div>
+<div class="info" data-box>
+  {% block content %}
+  {% if author or rubric or date %}
+  <div class="top">
+    {% if author %}<span class="author {% if not author_photo %}noimg{% endif %}">{% if author_photo %}<img src="{{ author_photo }}" alt="">{% endif %}{{ author }}</span>{% endif %}
+    <span class="tags">{% if date %}<span class="tag">{{ date }}</span>{% endif %}{% if rubric %}<span class="tag">{{ rubric }}</span>{% endif %}</span>
+  </div>
+  {% endif %}
+  <h1 class="title" data-fit data-min="{{ g.title[1] }}">{{ title }}</h1>
+  <div class="grow"></div>
+  <div class="bot">
+    {% if subtitle %}<p class="sub" data-fit data-min="{{ (g.sub*0.75)|round|int }}">{{ subtitle }}</p>{% endif %}
+    {% if not hide_logo %}<div class="logo">{{ logo_svg|safe }}</div>{% endif %}
+  </div>
+  {% endblock %}
+</div>
 </div></body></html>

@@ -45,6 +45,7 @@ def build_system(agent: str, extra: str = "") -> str:
     parts = [
         "# Общий мозг команды dsgners\n" + _read(config.TEAM / "brand.md"),
         _read(config.TEAM / "rules.md"),
+        _read(config.TEAM / "brandbook.md"),
         f"# Твоя роль: {agent}\n" + kn.load_text(agent, "ROLE.md"),
         kn.load_text(agent, "checklist.md"),
         "# Правила из прошлых правок владельца (соблюдай строго)\n"

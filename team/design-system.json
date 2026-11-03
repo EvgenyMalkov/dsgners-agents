@@ -1,26 +1,467 @@
 {
-  "font": "Inter",
-  "logo": "DSGNERS!",
-  "color": {
-    "ink": "#16181C",
-    "text": "#292C32",
-    "muted": "#676E7E",
-    "muted_on_dark": "#C9CCD3",
-    "line": "#E1E2E5",
-    "bg": "#F2F3F7",
-    "white": "#FFFFFF",
-    "lime": "#D5F839",
-    "lime_text": "#2A2E12",
-    "blue": "#4772FF",
-    "blue_dark": "#2F57D9",
-    "pink": "#FF72FF",
-    "green": "#46B566"
-  },
-  "radius": { "s": 12, "m": 16, "l": 24, "xl": 32, "xxl": 40 },
-  "themes": {
-    "dark":  { "bg": "#16181C", "fg": "#FFFFFF", "muted": "#C9CCD3", "badge_bg": "#D5F839", "badge_fg": "#16181C", "a1": "#FF72FF", "a2": "#4772FF", "a3": "#D5F839" },
-    "lime":  { "bg": "#D5F839", "fg": "#16181C", "muted": "#2A2E12", "badge_bg": "#16181C", "badge_fg": "#D5F839", "a1": "#FF72FF", "a2": "#4772FF", "a3": "#16181C" },
-    "light": { "bg": "#F2F3F7", "fg": "#292C32", "muted": "#676E7E", "badge_bg": "#4772FF", "badge_fg": "#FFFFFF", "a1": "#D5F839", "a2": "#4772FF", "a3": "#FF72FF" },
-    "blue":  { "bg": "#4772FF", "fg": "#FFFFFF", "muted": "#E9EEFF", "badge_bg": "#FFFFFF", "badge_fg": "#4772FF", "a1": "#D5F839", "a2": "#16181C", "a3": "#FF72FF" }
+ "source": "Figma «Коммуникационка дизайнерс» → Гайдбук (Brand guidelines)",
+ "brand_name": "Дизайнерс",
+ "logo": {
+  "full": "team/assets/logo.svg — словесный знак «дизайнерс», строчными, каждая буква со своим характером",
+  "short": "team/assets/logo-short.svg — знак «д», всегда на цветной подложке",
+  "color": "основной цвет логотипа — чёрный; на цветном фоне с высоким контрастом",
+  "short_backgrounds_ok": [
+   "#000000",
+   "#FFFFFF",
+   "#43C9FE",
+   "#FF72FF",
+   "#8CFF72",
+   "#FD9D22",
+   "#FEF014"
+  ],
+  "short_backgrounds_no": [
+   "#4772FF",
+   "#F83939",
+   "#9B50FF"
+  ],
+  "donts": [
+   "контурное начертание",
+   "замена букв или начертания",
+   "цветной лого на цветном фоне",
+   "деформация",
+   "тень",
+   "обводка"
+  ],
+  "clearspace": "охранное поле = буква «д»"
+ },
+ "font": {
+  "family": "CoFo Sona",
+  "fallback": "Golos Text",
+  "weights": "Regular (основной), Medium (редко)",
+  "smm_styles": {
+   "h1": {
+    "size": 165,
+    "tracking": "-3%",
+    "line_height": "95–100%"
+   },
+   "h2": {
+    "size": 100,
+    "tracking": "-2%",
+    "line_height": "95%"
+   },
+   "h3": {
+    "size": 80,
+    "tracking": "-2%",
+    "line_height": "95%"
+   },
+   "h4": {
+    "size": 60,
+    "tracking": "-1%",
+    "line_height": "95%"
+   },
+   "h5": {
+    "size": 22,
+    "tracking": "-1%",
+    "line_height": "100%"
+   },
+   "note": "кегли даны для макета 1920 px; в соцсетях масштабируются пропорционально формату"
   }
+ },
+ "color": {
+  "blue": "#4772FF",
+  "cyan": "#43C9FE",
+  "red": "#F83939",
+  "brown": "#86500B",
+  "yellow": "#FEF014",
+  "orange": "#FD9D22",
+  "apricot": "#FFC260",
+  "violet": "#9B50FF",
+  "pink": "#FF72FF",
+  "lavender": "#C7B3FF",
+  "green": "#8CFF72",
+  "lime": "#D5F839",
+  "black": "#000000",
+  "white": "#FFFFFF",
+  "paper": "#F8F8F8"
+ },
+ "color_pairs_allowed": [
+  [
+   "blue",
+   "cyan"
+  ],
+  [
+   "blue",
+   "apricot"
+  ],
+  [
+   "blue",
+   "orange"
+  ],
+  [
+   "blue",
+   "yellow"
+  ],
+  [
+   "blue",
+   "pink"
+  ],
+  [
+   "blue",
+   "lavender"
+  ],
+  [
+   "blue",
+   "green"
+  ],
+  [
+   "blue",
+   "lime"
+  ],
+  [
+   "blue",
+   "brown"
+  ],
+  [
+   "cyan",
+   "red"
+  ],
+  [
+   "cyan",
+   "brown"
+  ],
+  [
+   "cyan",
+   "violet"
+  ],
+  [
+   "cyan",
+   "apricot"
+  ],
+  [
+   "cyan",
+   "orange"
+  ],
+  [
+   "cyan",
+   "yellow"
+  ],
+  [
+   "cyan",
+   "pink"
+  ],
+  [
+   "cyan",
+   "green"
+  ],
+  [
+   "cyan",
+   "lime"
+  ],
+  [
+   "red",
+   "violet"
+  ],
+  [
+   "red",
+   "apricot"
+  ],
+  [
+   "red",
+   "orange"
+  ],
+  [
+   "red",
+   "yellow"
+  ],
+  [
+   "red",
+   "pink"
+  ],
+  [
+   "red",
+   "lavender"
+  ],
+  [
+   "red",
+   "green"
+  ],
+  [
+   "red",
+   "lime"
+  ],
+  [
+   "brown",
+   "violet"
+  ],
+  [
+   "brown",
+   "apricot"
+  ],
+  [
+   "brown",
+   "orange"
+  ],
+  [
+   "brown",
+   "yellow"
+  ],
+  [
+   "brown",
+   "lavender"
+  ],
+  [
+   "brown",
+   "green"
+  ],
+  [
+   "violet",
+   "apricot"
+  ],
+  [
+   "violet",
+   "orange"
+  ],
+  [
+   "violet",
+   "yellow"
+  ],
+  [
+   "violet",
+   "pink"
+  ],
+  [
+   "violet",
+   "green"
+  ],
+  [
+   "violet",
+   "lime"
+  ],
+  [
+   "apricot",
+   "green"
+  ],
+  [
+   "apricot",
+   "lime"
+  ],
+  [
+   "apricot",
+   "yellow"
+  ],
+  [
+   "orange",
+   "yellow"
+  ],
+  [
+   "orange",
+   "green"
+  ],
+  [
+   "orange",
+   "lime"
+  ],
+  [
+   "yellow",
+   "pink"
+  ],
+  [
+   "yellow",
+   "lavender"
+  ],
+  [
+   "yellow",
+   "green"
+  ],
+  [
+   "pink",
+   "lavender"
+  ],
+  [
+   "pink",
+   "green"
+  ],
+  [
+   "pink",
+   "lime"
+  ],
+  [
+   "lavender",
+   "green"
+  ],
+  [
+   "lavender",
+   "lime"
+  ]
+ ],
+ "formats": {
+  "square": [
+   1080,
+   1080
+  ],
+  "story": [
+   1080,
+   1920
+  ],
+  "post_16_9": [
+   1280,
+   720
+  ]
+ },
+ "palettes": {
+  "green": {
+   "bg": "#8CFF72",
+   "pairs": [
+    [
+     "#9B50FF",
+     "#FF72FF"
+    ],
+    [
+     "#D5F839",
+     "#FF72FF"
+    ],
+    [
+     "#4772FF",
+     "#43C9FE"
+    ]
+   ]
+  },
+  "lime": {
+   "bg": "#D5F839",
+   "pairs": [
+    [
+     "#FF72FF",
+     "#F83939"
+    ],
+    [
+     "#43C9FE",
+     "#4772FF"
+    ],
+    [
+     "#9B50FF",
+     "#FFC260"
+    ]
+   ]
+  },
+  "blue": {
+   "bg": "#4772FF",
+   "pairs": [
+    [
+     "#43C9FE",
+     "#8CFF72"
+    ],
+    [
+     "#FF72FF",
+     "#C7B3FF"
+    ],
+    [
+     "#D5F839",
+     "#FEF014"
+    ]
+   ]
+  },
+  "cyan": {
+   "bg": "#43C9FE",
+   "pairs": [
+    [
+     "#FF72FF",
+     "#FEF014"
+    ],
+    [
+     "#9B50FF",
+     "#C7B3FF"
+    ],
+    [
+     "#8CFF72",
+     "#4772FF"
+    ]
+   ]
+  },
+  "violet": {
+   "bg": "#9B50FF",
+   "pairs": [
+    [
+     "#43C9FE",
+     "#8CFF72"
+    ],
+    [
+     "#FEF014",
+     "#FF72FF"
+    ],
+    [
+     "#D5F839",
+     "#FD9D22"
+    ]
+   ]
+  },
+  "pink": {
+   "bg": "#FF72FF",
+   "pairs": [
+    [
+     "#8CFF72",
+     "#4772FF"
+    ],
+    [
+     "#D5F839",
+     "#9B50FF"
+    ],
+    [
+     "#C7B3FF",
+     "#9B50FF"
+    ]
+   ]
+  },
+  "orange": {
+   "bg": "#FD9D22",
+   "pairs": [
+    [
+     "#FEF014",
+     "#9B50FF"
+    ],
+    [
+     "#8CFF72",
+     "#4772FF"
+    ],
+    [
+     "#D5F839",
+     "#F83939"
+    ]
+   ]
+  },
+  "red": {
+   "bg": "#F83939",
+   "pairs": [
+    [
+     "#D5F839",
+     "#9B50FF"
+    ],
+    [
+     "#43C9FE",
+     "#FF72FF"
+    ],
+    [
+     "#FFC260",
+     "#FEF014"
+    ]
+   ]
+  },
+  "yellow": {
+   "bg": "#FEF014",
+   "pairs": [
+    [
+     "#FF72FF",
+     "#4772FF"
+    ],
+    [
+     "#8CFF72",
+     "#9B50FF"
+    ],
+    [
+     "#43C9FE",
+     "#FD9D22"
+    ]
+   ]
+  }
+ },
+ "info_block": {
+  "bg": "#FFFFFF",
+  "text": "#000000",
+  "tag_bg": "любой фирменный цвет, текст чёрный",
+  "author_pill": "#9B50FF, текст белый"
+ }
 }

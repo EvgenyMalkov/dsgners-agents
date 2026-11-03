@@ -7,7 +7,9 @@ from core.render import render, templates_index
 
 
 def system_extra() -> str:
-    return "# Доступные шаблоны\n```json\n" + json.dumps(templates_index(), ensure_ascii=False, indent=1) + "\n```"
+    from core import config
+    idx = {k: ({"size": v["size"], "use": v["use"]} if not k.startswith("_") else v) for k, v in templates_index().items()}
+    return "# Шаблоны\n```json\n" + json.dumps(idx, ensure_ascii=False, indent=1) + "\n```"
 
 
 TOOLS = [
@@ -18,17 +20,23 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "template": {"type": "string", "enum": list(templates_index())},
+                "template": {"type": "string", "enum": [k for k in templates_index() if not k.startswith("_")]},
                 "name": {"type": "string", "description": "короткое имя файла латиницей, напр. onboarding-tg"},
                 "data": {
                     "type": "object",
-                    "description": "Поля шаблона: title, rubric, subtitle, cta, theme, image; "
-                                   "для article-steps — items, для article-compare — table",
+                    "description": "Поля шаблона — см. «_fields» в списке шаблонов. Обязателен title. Для article-steps — items, для article-compare — table.",
                     "properties": {
-                        "title": {"type": "string"}, "rubric": {"type": "string"},
-                        "subtitle": {"type": "string"}, "cta": {"type": "string"},
-                        "theme": {"type": "string", "enum": ["dark", "lime", "light", "blue"]},
+                        "title": {"type": "string"}, "subtitle": {"type": "string"},
+                        "rubric": {"type": "string"}, "date": {"type": "string"},
+                        "author": {"type": "string"}, "author_photo": {"type": "string"},
+                        "layout": {"type": "string", "enum": ["graphic-top", "info-top", "info-left", "info-right"]},
+                        "graphic": {"type": "string", "enum": ["mix", "blocks"]},
+                        "palette": {"type": "string", "enum": ["auto", "green", "lime", "blue", "cyan", "violet", "pink", "orange", "red", "yellow"]},
+                        "motifs": {"type": "array", "items": {"type": "string"}},
                         "image": {"type": "string"},
+                        "image_shape": {"type": "string", "enum": ["rounded", "circle"]},
+                        "tag_color": {"type": "string"},
+                        "hide_logo": {"type": "boolean"},
                         "items": {"type": "array", "items": {"type": "string"}},
                         "table": {"type": "object", "properties": {
                             "columns": {"type": "array", "items": {"type": "string"}},

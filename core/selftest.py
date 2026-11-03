@@ -27,7 +27,7 @@ async def main() -> int:
             assert tools.TOOLS, f"у агента {a} нет инструментов"
             build_system(a, getattr(tools, "system_extra", lambda: "")())
     out = config.OUTBOX / "selftest" / "tg-post.png"
-    issues = await render("tg-post", {"rubric": "Тест", "title": "Проверка версии", "theme": "dark"}, out)
+    issues = await render("tg-post", {"rubric": "Тест", "title": "Проверка версии", "palette": "auto"}, out)
     assert out.exists() and out.stat().st_size > 5000, "рендер не создал картинку"
     print("Проверка пройдена. Рендер:", out, "| замечания вёрстки:", issues or "нет")
     return 0
