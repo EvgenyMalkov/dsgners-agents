@@ -38,6 +38,9 @@ def due(name: str, now: dt.datetime | None = None) -> bool:
         return time.time() - last >= 1800
     if name == "daily":
         return (now.hour, now.minute) >= (8, 30) and (not last or _local(last).date() < now.date())
+    if name == "bulk":
+        from core.seo import bulk
+        return bulk.state().get("phase") == "running" and time.time() - last >= 3600
     if name == "content_plan":   # вторник 10:00 — после недельного отчёта
         return now.weekday() == 1 and now.hour >= 10 and (not last or _local(last).date() < now.date())
     if name == "monthly":
@@ -56,6 +59,7 @@ JOBS = {
     "weekly": monitor.weekly,
     "monthly": monitor.monthly,
     "content_plan": monitor.content_plan,
+    "bulk": lambda: __import__("core.seo.bulk", fromlist=["tick"]).tick(monitor.say),
 }
 
 
@@ -86,12 +90,12 @@ async def loop():
         return
     await asyncio.sleep(20)  # дать боту подняться
     # robots.txt нужен new_pages, чтобы найти sitemap — поэтому часовая проверка первой
-    order = ["hourly", "new_pages", "daily", "weekly", "monthly", "content_plan"]
+    order = ["hourly", "new_pages", "daily", "weekly", "monthly", "content_plan", "bulk"]
     while True:
         for name in order:
             try:
                 if name not in _running and due(name):
-                    if name in ("weekly", "monthly"):
+                    if name in ("weekly", "monthly", "bulk"):
                         asyncio.create_task(run(name))   # долгие — в фоне
                     else:
                         await run(name)

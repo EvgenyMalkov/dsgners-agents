@@ -22,6 +22,7 @@ from core.web import start_web
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 dp = Dispatcher()
 WAIT_REASON: dict[int, str] = {}  # user_id -> job_id, ждём причину переделки
+WAIT_BULK: set[int] = set()       # ждём комментарий к пробной партии массового SEO
 BOT: Bot | None = None
 
 ROUTES = {"design": "designer", "d": "designer", "web": "webdesigner", "w": "webdesigner",
@@ -40,6 +41,7 @@ HELP = (
     "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
     "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n"
     "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n"
+    "/seo_bulk — массово оформить старые статьи (title, description, OG, alt): пробная партия → «Ок» → все\n"
     "/seo_plan — контент-план сейчас (сам приходит по вторникам): что писать и что обновлять по данным\n"
     "Файл CSV/XLSX из Вордстата — загрузить спрос в базу SEO-шника\n\n"
     "/office — ссылка на ИИ-офис\n"
@@ -330,6 +332,62 @@ async def seo_after_approve(job: dict):
             await BOT.send_message(uid, f"📌 Добавил SEO-шнику правил: {len(meta['rules'])}. Посмотреть: /rules seo")
 
 
+BULK_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="✅ Применить ко всем", callback_data="bulk_ok"),
+    InlineKeyboardButton(text="🔁 Переделать", callback_data="bulk_redo")]])
+
+
+async def _bulk_sample(m: Message):
+    from core.seo import bulk
+    await m.answer("Собираю статьи с проблемами из последнего обхода и делаю пробную партию — пара минут.")
+    text, path = await bulk.run_sample(seo_monitor.is_content)
+    if path:
+        await m.answer_document(FSInputFile(path), caption="Было → стало, пробная партия")
+        await m.answer(text, reply_markup=BULK_KB)
+    else:
+        await m.answer(text)
+
+
+@dp.message(Command("seo_bulk"))
+async def seo_bulk(m: Message):
+    if not is_owner(m):
+        return
+    from core.seo import bulk
+    if (m.text or "").partition(" ")[2].strip() == "status":
+        await m.answer(bulk.status_text())
+        return
+    if bulk.state().get("phase") == "running":
+        await m.answer("Уже идёт.\n" + bulk.status_text())
+        return
+    await _bulk_sample(m)
+
+
+@dp.callback_query(F.data == "bulk_ok")
+async def bulk_ok(c: CallbackQuery):
+    if not is_owner(c):
+        return
+    from core import site_api
+    from core.seo import bulk
+    bulk.approve()
+    await c.message.edit_reply_markup(reply_markup=None)
+    await c.message.answer("🚀 Запустил. Пробная партия и дальше — порциями по "
+                           f"{config.SEO_BULK_PER_HOUR} в час" + (" сразу на сайт." if site_api.enabled() else
+                           "; API сайта нет, поэтому в конце пришлю один файл для импорта разработчику.")
+                           + " Ход — /seo_bulk status, отчёт раз в день.")
+    asyncio.create_task(seo_scheduler.run("bulk"))
+    await c.answer()
+
+
+@dp.callback_query(F.data == "bulk_redo")
+async def bulk_redo(c: CallbackQuery):
+    if not is_owner(c):
+        return
+    WAIT_BULK.add(c.from_user.id)
+    await c.message.edit_reply_markup(reply_markup=None)
+    await c.message.answer("Что поправить? Напиши одним сообщением — это станет правилом для всех статей, и я переделаю пробную партию.")
+    await c.answer()
+
+
 @dp.message(Command("seo_plan"))
 async def seo_plan(m: Message):
     if not is_owner(m):
@@ -397,6 +455,13 @@ async def text_task(m: Message):
     if not is_owner(m):
         return
     uid = m.from_user.id
+    if uid in WAIT_BULK:
+        from core.seo import bulk
+        WAIT_BULK.discard(uid)
+        bulk.add_rule(m.text)
+        await m.answer("Записал правило.")
+        await _bulk_sample(m)
+        return
     if uid in WAIT_REASON:
         jid = WAIT_REASON.pop(uid)
         try:

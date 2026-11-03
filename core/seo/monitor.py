@@ -260,10 +260,23 @@ async def new_pages() -> str:
         await say("🚨 SEO: проблемы на новых/обновлённых страницах\n\n" + "\n".join(lines))
 
     started = 0
-    for r in reports:
-        if (r.url in new and is_content(r.url) and r.status == 200 and not r.noindex
-                and not store.was_optimized(r.url) and _optimized_today() < config.SEO_AUTO_OPTIMIZE_PER_DAY):
-            if start_optimize(r.url, r, auto=True):
+    fresh = [r for r in reports if r.url in new and is_content(r.url) and r.status == 200 and not r.noindex
+             and not store.was_optimized(r.url)]
+    from core import site_api
+    from core.seo import bulk
+    if fresh and bulk.state().get("phase") in ("running", "done") and site_api.enabled():
+        # стиль массового оформления владелец уже одобрил — новые статьи оформляются сразу и без согласования
+        d = bulk._db()
+        for r in fresh:
+            d.execute("INSERT OR REPLACE INTO bulk(url, prio, state, note, ts) VALUES(?,?,?,?,?)",
+                      (r.url, 1e9, "queued", "новая статья", time.time()))
+        d.commit()
+        await bulk.process([r.url for r in fresh])
+        ok, err, _ = await bulk.apply_ready()
+        notes.append(f"новые статьи оформлены и записаны на сайт: {ok}" + (f", ошибок {err}" if err else ""))
+    else:
+        for r in fresh:
+            if _optimized_today() < config.SEO_AUTO_OPTIMIZE_PER_DAY and start_optimize(r.url, r, auto=True):
                 started += 1
     if started:
         notes.append(f"на оформление SEO-агенту: {started}")
@@ -464,13 +477,16 @@ async def weekly() -> tuple[str, Path | None]:
 
 def status_text() -> str:
     names = {"hourly": "каждый час", "new_pages": "новые страницы", "daily": "ежедневно", "weekly": "раз в неделю",
-             "monthly": "разбор за месяц", "content_plan": "контент-план"}
+             "monthly": "разбор за месяц", "content_plan": "контент-план", "bulk": "массовое оформление"}
     lines = [f"🔎 SEO-мониторинг {config.SEO_SITE}"]
     for r in store.runs():
         when = dt.datetime.fromtimestamp(r["ts"]).strftime("%d.%m %H:%M")
         lines.append(f"{'✅' if r['ok'] else '❌'} {names.get(r['name'], r['name'])} — {when}: {r['note'][:150]}")
     al = store.active_alerts()
     lines.append("\nАктивные проблемы:\n" + ("\n".join(f"— {a['text']}" for a in al) if al else "нет"))
+    from core.seo import bulk
+    if bulk.state().get("phase") != "idle":
+        lines.append("\n" + bulk.status_text())
     lines.append(f"\nАдресов в sitemap: {len(store.known_urls())}; авто-оформлений сегодня: "
                  f"{_optimized_today()}/{config.SEO_AUTO_OPTIMIZE_PER_DAY}")
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
