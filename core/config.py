@@ -15,6 +15,10 @@ OWNER_IDS = {int(x) for x in os.getenv("OWNER_IDS", "").replace(" ", "").split("
 # Цены модели за 1 млн токенов, $ — для подсчёта расходов. Сверяй с docs.claude.com при смене модели.
 PRICE_IN = float(os.getenv("PRICE_IN", "2"))
 PRICE_OUT = float(os.getenv("PRICE_OUT", "10"))
+# Сильная модель — для задач, где качество окупается: контент-план, текст статьи, месячный разбор
+MODEL_SMART = os.getenv("MODEL_SMART", "claude-opus-5-5")
+PRICE_IN_SMART = float(os.getenv("PRICE_IN_SMART", "4"))
+PRICE_OUT_SMART = float(os.getenv("PRICE_OUT_SMART", "20"))
 MONTHLY_LIMIT_USD = float(os.getenv("MONTHLY_LIMIT_USD", "50"))
 
 MAX_STEPS = int(os.getenv("MAX_STEPS", "14"))

@@ -9,6 +9,17 @@ from core.seo import page, store
 MAX_STEPS = 26      # статья: поиск конкурентов, чтение, ссылки, текст, SEO-пакет, обложка
 MAX_TOKENS = 20000  # текст статьи целиком уходит одним save_document
 
+
+def model_for(task: str) -> str | None:
+    """Сильная модель (MODEL_SMART) — где качество окупается: решить, что писать (контент-план),
+    написать текст статьи, сделать выводы из разбора. Остальное — обычная модель."""
+    from core import config
+    head = task[:600]
+    if ("Составь контент-план" in head or "Статья по утверждённому плану" in head
+            or "чему научиться" in head or "навык «Контент-план»" in head):
+        return config.MODEL_SMART
+    return None
+
 TOOLS = [
     {
         "name": "check_site",

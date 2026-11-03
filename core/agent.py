@@ -86,6 +86,20 @@ def image_block(png: Path, max_side: int = 1100) -> dict:
                                         "data": base64.b64encode(buf.getvalue()).decode()}}
 
 
+def _cache_tail(messages: list) -> None:
+    """Скользящая точка кеша на последнем сообщении: вся история шагов читается из кеша (в 10 раз дешевле),
+    а не оплачивается заново на каждом шаге. Точек кеша не больше 4: системный промпт, первое сообщение
+    (референсы/задача), и эта — на конце истории."""
+    for msg in messages[1:]:
+        if isinstance(msg["content"], list):
+            for part in msg["content"]:
+                if isinstance(part, dict):
+                    part.pop("cache_control", None)
+    last = messages[-1]["content"]
+    if isinstance(last, list) and last and isinstance(last[-1], dict):
+        last[-1]["cache_control"] = {"type": "ephemeral"}
+
+
 def _prune_old_images(messages: list) -> None:
     """Старые картинки в истории заменяем текстом — модель видит только свежий рендер."""
     for msg in messages[:-1]:
@@ -119,6 +133,7 @@ async def run_agent(agent: str, task: str, progress=None, job_id: str | None = N
     tools = list(tools_mod.TOOLS)
     if skills.list_skills(agent, enabled_only=True):
         tools.append(skills.USE_SKILL_TOOL)
+    model = (getattr(tools_mod, "model_for", lambda t: None)(task) or config.MODEL)
     client = anthropic.AsyncAnthropic(api_key=config.ANTHROPIC_API_KEY)
     messages: list = [{"role": "user", "content": first_message(agent, task)}]
     cost = 0.0
@@ -127,10 +142,11 @@ async def run_agent(agent: str, task: str, progress=None, job_id: str | None = N
     # агент может поднять лимиты у себя в tools.py (длинные статьи требуют больше шагов и токенов)
     for _ in range(getattr(tools_mod, "MAX_STEPS", config.MAX_STEPS)):
         _prune_old_images(messages)
+        _cache_tail(messages)
         resp = await client.messages.create(
-            model=config.MODEL, max_tokens=getattr(tools_mod, "MAX_TOKENS", 8192), system=system, tools=tools, messages=messages,
+            model=model, max_tokens=getattr(tools_mod, "MAX_TOKENS", 8192), system=system, tools=tools, messages=messages,
         )
-        cost += spend.record(agent, resp.usage)
+        cost += spend.record(agent, resp.usage, model)
         messages.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})
         final_text = "\n".join(b.text for b in resp.content if b.type == "text").strip() or final_text
 
