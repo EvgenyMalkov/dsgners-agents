@@ -31,6 +31,11 @@ _notify = None        # async (text, files: list[Path] | None) — в Telegram �
 _start_job = None     # (agent, task, source, full_task) — запуск задачи агенту
 
 
+def autopilot() -> bool:
+    """Берёт ли SEO-агент задачи сам. Переключается командой /seo_auto (хранится в data/seo.db)."""
+    return bool(store.get("autopilot", config.SEO_AUTOPILOT))
+
+
 def setup(notify, start_job):
     global _notify, _start_job
     _notify, _start_job = notify, start_job
@@ -276,7 +281,8 @@ async def new_pages() -> str:
         notes.append(f"новые статьи оформлены и записаны на сайт: {ok}" + (f", ошибок {err}" if err else ""))
     else:
         for r in fresh:
-            if _optimized_today() < config.SEO_AUTO_OPTIMIZE_PER_DAY and start_optimize(r.url, r, auto=True):
+            if (autopilot() and _optimized_today() < config.SEO_AUTO_OPTIMIZE_PER_DAY
+                    and start_optimize(r.url, r, auto=True)):
                 started += 1
     if started:
         notes.append(f"на оформление SEO-агенту: {started}")
@@ -463,8 +469,9 @@ async def weekly() -> tuple[str, Path | None]:
     out.write_text(report, "utf-8")
     crit = sum(len(v) for (l, _), v in by_code.items() if l == "critical")
     await say(f"📊 Недельный SEO-отчёт: проверено {len(reports)} стр., критичных проблем {crit}, "
-              f"битых ссылок {len(broken)}. Список задач по приоритету пришлёт SEO-агент.", [out])
-    if _start_job:
+              f"битых ссылок {len(broken)}."
+              + (" Список задач по приоритету пришлёт SEO-агент." if autopilot() else ""), [out])
+    if _start_job and autopilot():
         _start_job("seo", f"Недельный SEO-отчёт {today:%d.%m}: задачи по приоритету", "monitor",
                    "Ниже недельный отчёт автоматической проверки сайта. Преврати его в список задач по приоритету "
                    "(польза для трафика / трудозатраты): сохрани документ «tickets» — каждая задача отдельно: что, где, "
@@ -489,6 +496,7 @@ def status_text() -> str:
         lines.append("\n" + bulk.status_text())
     lines.append(f"\nАдресов в sitemap: {len(store.known_urls())}; авто-оформлений сегодня: "
                  f"{_optimized_today()}/{config.SEO_AUTO_OPTIMIZE_PER_DAY}")
+    lines.append("Автопилот SEO-агента: " + ("включён" if autopilot() else "выключен — задачи только по командам (/seo_auto on)"))
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
     lines.append("IndexNow: " + ("подключён" if config.INDEXNOW_KEY else "нет ключа"))
     from core.seo import keywords
@@ -568,7 +576,7 @@ async def monthly() -> str:
     await say(f"📈 Месячный разбор SEO: трафик на статьи за 30 дней — "
               f"{sum(v for u, v in cur.items() if u in content)} визитов. Топ-{len(top)} статей стали эталонами для агента; "
               "выводы и новые правила пришлёт SEO-шник.", [out])
-    if _start_job:
+    if _start_job and autopilot():
         _start_job("seo", f"Разбор результатов за месяц ({today:%m.%Y}): выводы и правила", "monitor",
                    "Ниже данные о поисковом трафике статей dsgners за месяц. Задача — понять, какие статьи и почему "
                    "собирают трафик, и чему научиться.\n"

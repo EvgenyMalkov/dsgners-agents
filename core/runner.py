@@ -61,8 +61,27 @@ def start_job(agent: str, task: str, source: str, parent: str | None = None, ful
     jid = office.create_job(agent, task, full_task or task, source, parent)
     if _locks[agent].locked():
         office.emit(agent, "info", f"В очереди: {_short(task)}", jid)
-    asyncio.create_task(_run(jid, agent))
+    t = asyncio.create_task(_run(jid, agent))
+    _tasks[jid] = t
+    t.add_done_callback(lambda _t, j=jid: _tasks.pop(j, None))
     return jid
+
+
+_tasks: dict[str, asyncio.Task] = {}
+
+
+def cancel_queued(agent: str) -> int:
+    """Снять с агента задачи, которые ещё ждут очереди (текущая доработает до конца)."""
+    n = 0
+    for jid, t in list(_tasks.items()):
+        job = office.get_job(jid)
+        if job and job["agent"] == agent and job["status"] == "queued" and not t.done():
+            t.cancel()
+            office.update_job(jid, status="error", caption="Снято владельцем (/seo_stop)", finished=time.time())
+            n += 1
+    if n:
+        office.emit(agent, "info", f"Снято задач из очереди: {n}")
+    return n
 
 
 async def _execute(jid: str, agent: str, internal_for: str | None = None) -> list:

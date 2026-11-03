@@ -42,6 +42,7 @@ HELP = (
     "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
     "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n"
     "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n"
+    "/seo_stop — остановить SEO-агента (снять очередь, выключить автопилот); /seo_auto on|off — автопилот\n"
     "/seo_bulk — массово оформить старые статьи (title, description, OG, alt): пробная партия → «Ок» → все\n"
     "/seo_plan — контент-план сейчас (сам приходит по вторникам): что писать и что обновлять по данным\n"
     "Файл CSV/XLSX из Вордстата — загрузить спрос в базу SEO-шника\n\n"
@@ -387,6 +388,36 @@ async def bulk_redo(c: CallbackQuery):
     await c.message.edit_reply_markup(reply_markup=None)
     await c.message.answer("Что поправить? Напиши одним сообщением — это станет правилом для всех статей, и я переделаю пробную партию.")
     await c.answer()
+
+
+@dp.message(Command("seo_auto"))
+async def seo_auto(m: Message):
+    if not is_owner(m):
+        return
+    from core.seo import store as seo_store
+    arg = (m.text or "").partition(" ")[2].strip().lower()
+    if arg in ("on", "вкл", "1"):
+        seo_store.put("autopilot", True)
+    elif arg in ("off", "выкл", "0"):
+        seo_store.put("autopilot", False)
+    on = seo_monitor.autopilot()
+    await m.answer(("🟢 Автопилот SEO включён: агент сам оформляет новые статьи, разбирает недельный отчёт, "
+                    "делает контент-план и разбор за месяц." if on else
+                    "⏸ Автопилот SEO выключен: мониторинг и алерты работают (без ИИ), задачи агенту — только по командам "
+                    "/seo_fix, /article, /seo_plan, /seo.") + "\nПереключить: /seo_auto on | off")
+
+
+@dp.message(Command("seo_stop"))
+async def seo_stop(m: Message):
+    """Выключить автопилот и снять с SEO-агента все задачи в очереди."""
+    if not is_owner(m):
+        return
+    from core.office import office
+    from core.seo import store as seo_store
+    seo_store.put("autopilot", False)
+    n = runner.cancel_queued("seo")
+    await m.answer(f"⏸ SEO-агент остановлен: автопилот выключен, из очереди снято задач: {n}. "
+                   "Задача, которую он делает прямо сейчас, доработает до конца. Включить снова: /seo_auto on")
 
 
 @dp.message(Command("seo_plan"))
