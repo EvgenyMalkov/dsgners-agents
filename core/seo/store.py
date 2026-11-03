@@ -136,6 +136,9 @@ def save_check(rep):
 
 
 def mark_optimized(url: str):
+    from core.seo.page import norm
+    url = norm(url)
+    db().execute("INSERT INTO urls(url, first_seen, in_sitemap) VALUES(?,?,0) ON CONFLICT(url) DO NOTHING", (url, time.time()))
     db().execute("UPDATE urls SET optimized=? WHERE url=?", (time.time(), url))
     db().commit()
 

@@ -197,12 +197,44 @@ def seo_start_job(agent: str, task: str, source: str, full_task: str) -> str:
     return runner.start_job(agent, task, source=source, full_task=full_task)
 
 
+async def seo_publish(job: dict):
+    """«Ок» на статью редакции → картинки, текст и SEO-поля уходят на сайт."""
+    from core import publish, site_api
+    from core.office import office
+    from core.seo import store as seo_store
+    if not site_api.enabled():
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, "ℹ️ API сайта ещё не подключено — статью нужно опубликовать вручную "
+                                        "(текст, картинки и SEO-пакет — в файлах выше).")
+        return
+    probs = publish.problems(job)
+    if probs:
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, "⏸ Не публикую: " + "; ".join(probs)
+                                   + "\nЗамени пометки сам и опубликуй вручную, или «Переделать» с подсказкой (например, ссылками на работы).")
+        return
+    try:
+        url, log = await publish.publish(job, seo_monitor.is_own)
+        seo_store.mark_optimized(url)       # мониторинг не будет оформлять её второй раз
+        office.update_job(job["id"], meta=dict(job.get("meta") or {}, published_url=url, applied=log))
+        office.emit("seo", "done", f"Опубликовано: {url}", job["id"])
+        text = f"🚀 {url}\n" + "\n".join(log)
+    except Exception as e:
+        office.emit("seo", "error", f"Публикация не удалась: {e}", job["id"])
+        text = f"⚠️ Публикация не удалась: {e}\nФайлы статьи — в сообщении выше, можно опубликовать вручную."
+    for uid in config.OWNER_IDS:
+        await BOT.send_message(uid, text)
+
+
 async def seo_apply_site(job: dict):
     """После «Ок»: SEO-поля → на сайт, письмо → автору (почта + уведомление). Нужен API сайта (docs/site-api.md)."""
     from core import site_api
     from core.office import office
     meta = job.get("meta") or {}
     fields, letter = meta.get("seo_fields"), meta.get("letter")
+    if meta.get("article"):
+        await seo_publish(job)
+        return
     if not (fields or letter):
         return
     if not site_api.enabled():
@@ -212,7 +244,13 @@ async def seo_apply_site(job: dict):
         return
     from core.seo import store as seo_store
     res = []
-    url = (fields or {}).get("url") or (letter or {}).get("url")
+    url = (fields or {}).get("url") or (letter or {}).get("url") or ""
+    if not url.startswith("http") or "{URL}" in url:
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, "ℹ️ Статья ещё не на сайте — SEO-поля не записывал (они в пакете выше).")
+        return
+    if fields and fields.get("jsonld"):
+        fields = dict(fields, jsonld=fields["jsonld"].replace("{URL}", url))
     before = {}
     try:
         art = await site_api.get_article(url)
@@ -390,7 +428,9 @@ async def send_review(job: dict):
     from core import site_api
     meta = job.get("meta") or {}
     ok_text = "✅ Ок и опубликовать" if any(p.get("channel") for p in posts) else "✅ Ок"
-    if job["agent"] == "seo" and site_api.enabled() and (meta.get("seo_fields") or meta.get("letter")):
+    if job["agent"] == "seo" and site_api.enabled() and meta.get("article"):
+        ok_text = "✅ Ок и опубликовать на сайт"
+    elif job["agent"] == "seo" and site_api.enabled() and (meta.get("seo_fields") or meta.get("letter")):
         ok_text = "✅ Ок и отправить на сайт" + (" и автору" if meta.get("letter") else "")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=ok_text, callback_data=f"ok:{job['id']}"),

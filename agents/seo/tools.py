@@ -68,7 +68,7 @@ TOOLS = [
         "description": "Итоговые SEO-поля статьи в машинном виде — после «Ок» владельца система сама запишет их на сайт "
                        "(текст статьи не меняется). Вызывай в дополнение к документу «seo», когда оформляешь существующую статью.",
         "input_schema": {"type": "object", "properties": {
-            "url": {"type": "string"},
+            "url": {"type": "string", "description": "адрес статьи; для новой статьи — {URL}"},
             "seo_title": {"type": "string"}, "meta_description": {"type": "string"},
             "og_title": {"type": "string"}, "og_description": {"type": "string"},
             "jsonld": {"type": "string", "description": "JSON-LD целиком (без тега script), проверенный validate_jsonld"},
@@ -76,6 +76,17 @@ TOOLS = [
                 "src": {"type": "string"}, "alt": {"type": "string"}}, "required": ["src", "alt"]},
                 "description": "alt для картинок: адрес картинки как на странице → alt"},
         }, "required": ["url"]},
+    },
+    {
+        "name": "set_article",
+        "description": "Данные для публикации статьи РЕДАКЦИИ на сайт — после «Ок» владельца система сама загрузит "
+                       "картинки, опубликует (или обновит) статью и запишет SEO-поля. Текст берётся из документа «article».",
+        "input_schema": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "заголовок статьи (H1)"},
+            "cover_file": {"type": "string", "description": "имя файла обложки от дизайнера, напр. cover.png"},
+            "update_url": {"type": "string", "description": "адрес статьи редакции — если это обновление, а не новая"},
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "2–5 тегов, если на сайте есть теги"},
+        }, "required": ["title"]},
     },
     {
         "name": "set_author_letter",
@@ -319,6 +330,14 @@ async def set_seo_fields(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": "SEO-поля сохранены — после «Ок» уйдут на сайт."}]
 
 
+async def set_article(inp: dict, ctx: Ctx):
+    from core.seo import monitor
+    if inp.get("update_url") and not monitor.is_own(inp["update_url"]):
+        return [{"type": "text", "text": "Это статья автора — её текст мы не меняем. Используй навык «Рекомендации автору»."}]
+    ctx.meta["article"] = {k: v for k, v in inp.items() if v}
+    return [{"type": "text", "text": "Данные для публикации сохранены — после «Ок» статья уйдёт на сайт."}]
+
+
 async def set_author_letter(inp: dict, ctx: Ctx):
     from core.seo import monitor
     if monitor.is_own(inp["url"]):
@@ -329,7 +348,7 @@ async def set_author_letter(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": "Письмо сохранено — после «Ок» уйдёт автору."}]
 
 
-HANDLERS = {"set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
+HANDLERS = {"set_article": set_article, "set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
             "validate_jsonld": validate_jsonld}
 
 
