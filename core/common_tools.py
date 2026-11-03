@@ -53,7 +53,8 @@ async def fetch(url: str, limit_bytes=3_000_000) -> tuple[int, str, str]:
         url = "https://" + url
     async with aiohttp.ClientSession(headers={"User-Agent": UA}, timeout=aiohttp.ClientTimeout(total=25)) as s:
         async with s.get(url, allow_redirects=True) as r:
-            raw = await r.content.read(limit_bytes)
+            from core.seo.page import read_body
+            raw, _ = await read_body(r, limit_bytes)
             return r.status, str(r.url), raw.decode(r.charset or "utf-8", errors="ignore")
 
 

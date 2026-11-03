@@ -223,17 +223,25 @@ async def new_pages() -> str:
         return "sitemap не загрузился, повторю через 30 мин"
     await alert("sitemap", False, "", "sitemap снова читается")
     urls = res.urls
+    store.put("sitemap_locs", res.locs)
+    locs_note = "; ".join(f"{f.rsplit('/', 1)[-1]}: {n}" for f, n in res.locs.items())
     first = not store.known_urls()
     new, changed, gone = store.upsert_sitemap(urls, [f for f, _ in res.failed])
     if first:
         return f"первое знакомство с сайтом: в sitemap {len(urls)} адресов, запомнил. {fail_note}".strip()
+    if len(new) > config.SEO_NEW_BURST:
+        # столько новых публикаций за 30 минут не бывает — это догрузка адресов, которых бот раньше не видел
+        # (например, после исправления чтения sitemap). Запоминаем без писем авторам, задач и переобхода.
+        return (f"догрузил {len(new)} адресов, которых раньше не видел (не новые публикации) — запомнил без обработки. "
+                f"Адресов по файлам: {locs_note}")
     if len(gone) > max(20, len(urls) * 0.2):
         await say(f"⚠️ SEO: из sitemap пропало {len(gone)} адресов — их нет уже два успешных прочтения подряд "
-                  f"(например: {', '.join(gone[:3])}). Если это не чистка — проверить генерацию sitemap.")
+                  f"(например: {', '.join(gone[:3])}).\nАдресов по файлам: {locs_note}.\n"
+                  "Если это не чистка — проверить генерацию sitemap.")
 
     todo = new[:50] + [u for u in changed if u not in new][:30]
     if not todo:
-        return f"в sitemap {len(urls)} адресов, новых нет. {fail_note}".strip()
+        return f"в sitemap {len(urls)} адресов ({locs_note}), новых нет. {fail_note}".strip()
 
     reports: list[page.PageReport] = []
     async with _session() as s:

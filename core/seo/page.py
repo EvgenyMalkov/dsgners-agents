@@ -50,6 +50,17 @@ class Fetched:
     error: str = ""
 
 
+async def read_body(resp, max_bytes: int) -> tuple[bytes, bool]:
+    """Прочитать тело ответа ЦЕЛИКОМ (до max_bytes). content.read(n) отдаёт только то, что уже пришло, —
+    из-за этого раньше терялся хвост sitemap и страниц. Вернёт (данные, обрезано_ли_по_лимиту)."""
+    buf = bytearray()
+    async for chunk in resp.content.iter_chunked(65536):
+        buf += chunk
+        if len(buf) >= max_bytes:
+            return bytes(buf[:max_bytes]), True
+    return bytes(buf), False
+
+
 async def fetch(url: str, session: aiohttp.ClientSession | None = None, max_bytes=4_000_000,
                 max_hops=6, timeout=25) -> Fetched:
     """GET с ручными редиректами — чтобы видеть цепочки и коды каждого шага."""
@@ -72,8 +83,10 @@ async def fetch(url: str, session: aiohttp.ClientSession | None = None, max_byte
                 res.headers = {k.lower(): v for k, v in r.headers.items()}
                 if "html" in res.headers.get("content-type", "") or "xml" in res.headers.get("content-type", "") \
                         or "text" in res.headers.get("content-type", ""):
-                    raw = await r.content.read(max_bytes)
+                    raw, cut = await read_body(r, max_bytes)
                     res.html = raw.decode(r.charset or "utf-8", errors="ignore")
+                    if cut:
+                        res.error = f"ответ больше {max_bytes // 1_000_000} МБ — прочитано не всё"
                 break
         else:
             res.error = f"больше {max_hops} редиректов"
@@ -348,6 +361,7 @@ async def check_url(url: str, session=None, is_article: bool = False, tries: int
 class SitemapResult:
     urls: dict = field(default_factory=dict)      # {адрес страницы: (lastmod, sitemap-файл, откуда адрес)}
     failed: list = field(default_factory=list)    # [(sitemap-файл, причина)] — не загрузились даже после повторов
+    locs: dict = field(default_factory=dict)      # {sitemap-файл: сколько <loc> в нём насчитано}
     files: list = field(default_factory=list)     # sitemap-файлы, которые прочитаны успешно
 
 
@@ -357,14 +371,15 @@ async def _fetch_sitemap(url: str, session, tries=3) -> Fetched:
     f = Fetched(url=url, final=url, status=0)
     for i in range(tries):
         f = await fetch(url, session, max_bytes=60_000_000, timeout=SITEMAP_TIMEOUT)
-        if f.status == 200 and f.html and ("<urlset" in f.html or "<sitemapindex" in f.html):
+        if (f.status == 200 and not f.error and f.html
+                and re.search(r"</(urlset|sitemapindex)>\s*$", f.html.strip()[-200:] + "\n")):
             return f
         if 400 <= f.status < 500 and f.status != 429:
             break                      # 404/403 — повтор не поможет
         if i < tries - 1:
             await asyncio.sleep(SITEMAP_RETRY_PAUSE * (i + 1))
     if f.status == 200 and not f.error:
-        f.error = "ответ без <urlset>/<sitemapindex> (обрезан или не XML)"
+        f.error = "файл пришёл не целиком (нет закрывающего </urlset>) или это не XML"
     return f
 
 
@@ -387,7 +402,9 @@ async def read_sitemaps(urls: list[str], session=None, limit=200_000) -> Sitemap
         if "<sitemapindex" in xml and depth < 3:
             queue += [(unescape(u.strip()), depth + 1) for u in re.findall(r"<loc>\s*([^<]+?)\s*</loc>", xml)]
             continue
-        for block in re.findall(r"(?is)<url>(.*?)</url>", xml):
+        blocks = re.findall(r"(?is)<url>(.*?)</url>", xml)
+        res.locs[sm] = len(blocks)
+        for block in blocks:
             loc = re.search(r"(?is)<loc>\s*([^<]+?)\s*</loc>", block)
             if not loc:
                 continue

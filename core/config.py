@@ -55,6 +55,8 @@ SEO_AUTOPILOT = os.getenv("SEO_AUTOPILOT", "0") == "1"
 SEO_AUTHOR_TIPS = os.getenv("SEO_AUTHOR_TIPS", "1") == "1"
 SEO_AUTHOR_TIPS_PER_DAY = int(os.getenv("SEO_AUTHOR_TIPS_PER_DAY", "30"))
 SEO_TIPS_AUTO_SEND = os.getenv("SEO_TIPS_AUTO_SEND", "0") == "1"   # 1 — слать авторам без «Ок» (нужен API сайта)
+# Больше стольких «новых» адресов за одну проверку — это догрузка, а не публикации: запоминаем без обработки
+SEO_NEW_BURST = int(os.getenv("SEO_NEW_BURST", "50"))
 SEO_TOPICS_PER_WEEK = int(os.getenv("SEO_TOPICS_PER_WEEK", "5"))   # тем в недельном контент-плане
 # 1 — планы статей из контент-плана принимаются автоматически (ты согласуешь только список тем и готовый текст)
 SEO_AUTO_PLANS = os.getenv("SEO_AUTO_PLANS", "0") == "1"
