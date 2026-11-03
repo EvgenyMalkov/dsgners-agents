@@ -142,6 +142,8 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     ctx = {k: v for k, v in data.items() if v not in (None, "", [])}
     if meta.get("kind") == "showcase":
         return await _render_showcase(template, meta, ctx, out_png)
+    if meta.get("kind") in ("collage", "digest", "poster"):
+        return await _render_layout(meta, ctx, out_png)
     for k in ("title", "subtitle", "rubric", "date", "author"):
         if isinstance(ctx.get(k), str):
             ctx[k] = typograf(ctx[k])
@@ -192,6 +194,49 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
         finally:
             await browser.close()
     return warn + issues
+
+
+async def _render_layout(meta: dict, ctx: dict, out_png: Path) -> list[str]:
+    import asyncio
+
+    from core import brandgfx, layouts
+    W, H = meta.get("formats", {}).get(ctx.get("format", ""), meta["size"])
+    for k in ("title", "subtitle", "rubric", "date"):
+        if isinstance(ctx.get(k), str):
+            ctx[k] = typograf(ctx[k])
+    raw = [i for i in (ctx.get("images") or ([ctx["image"]] if ctx.get("image") else [])) if i][:6]
+    warn = []
+    if ctx.get("image_shape") == "cutout" and raw:
+        p_ = Path(raw[0]) if Path(raw[0]).is_absolute() else config.ROOT / raw[0]
+        cut = await asyncio.to_thread(brandgfx.cutout, str(p_))
+        if cut:
+            raw[0] = cut
+        else:
+            warn.append("Обтравка не получилась — картинка стоит как есть.")
+    imgs = [_image_src(i) for i in raw]
+    for b in ctx.get("badges") or []:
+        if isinstance(b, dict) and b.get("image"):
+            b["image_src"] = _image_src(b["image"])
+    html = layouts.BUILDERS[meta["kind"]](ctx, W, H, imgs)
+    return warn + await _shoot(html, W, H, out_png, meta.get("safe", 40))
+
+
+async def _shoot(html: str, W: int, H: int, out_png: Path, safe: int) -> list[str]:
+    out_png = out_png.resolve()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    html_path = out_png.with_suffix(".html")
+    html_path.write_text(html, "utf-8")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=["--allow-file-access-from-files"])
+        try:
+            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+            await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=30000)
+            issues = await page.evaluate(CHECK_JS, {"safe": safe})
+            await page.locator("#canvas").screenshot(path=str(out_png))
+        finally:
+            await browser.close()
+    # фото и шейпы намеренно лежат друг на друге — проверяем только текст против краёв и переполнения
+    return [i for i in issues if "наезжает" not in i]
 
 
 async def _render_showcase(template: str, meta: dict, ctx: dict, out_png: Path) -> list[str]:

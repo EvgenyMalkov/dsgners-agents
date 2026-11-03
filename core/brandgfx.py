@@ -47,7 +47,11 @@ def _svg_shape(name: str, x, y, w, h, fill, stroke, outline, rot=0.0, z=1) -> st
         rule = ' fill-rule="evenodd"' if sp.get("evenodd") else ""
         body = (f'<path d="{sp["d"]}"{rule} fill="{fill}" stroke="{stroke}" stroke-width="{2 * outline:.1f}" '
                 f'stroke-linejoin="round" paint-order="stroke" vector-effect="non-scaling-stroke"/>')
-        if sp.get("inner"):
+        if sp.get("inner") == "eyes":
+            for ex in (78, 122):
+                body += (f'<circle cx="{ex}" cy="98" r="17" fill="#FFFFFF" stroke="#000" stroke-width="3"/>'
+                         f'<circle cx="{ex + 3}" cy="101" r="8.5" fill="#000"/>')
+        elif sp.get("inner"):
             inn = shapes()[sp["inner"]]
             body += (f'<g transform="translate(100 96) scale(.42) translate(-100 -100)">'
                      f'<path d="{inn["d"]}" fill="{stroke}"/></g>')
@@ -57,7 +61,7 @@ def _svg_shape(name: str, x, y, w, h, fill, stroke, outline, rot=0.0, z=1) -> st
 
 def _pick_motifs(motifs, n, rnd):
     names = [m for m in (motifs or []) if m in shapes() and m != "plus"]
-    pool = [k for k in shapes() if k not in ("plus",)]
+    pool = [k for k in shapes() if k not in ("plus", "speech", "cloudeyes")]
     while len(names) < n:
         c = rnd.choice(pool)
         if c not in names:
@@ -142,6 +146,25 @@ def build(w: int, h: int, *, motifs=None, palette="auto", mode="mix", image=None
         cx, cy = (c_long, c_short) if horizontal else (c_short, c_long)
         out.append(_svg_shape(nm, cx - s_ / 2, cy - s_ / 2, s_, s_, fill, stroke, outline,
                               rnd.uniform(-14, 14), z=1 + i))
+    if cut and mode == "frame":
+        # вариант из макета «Как выйти из (любого) тупика?»: рамка из скруглённых палочек + круг, человек в центре
+        out = []
+        fill, stroke = pal["pairs"][0]
+        f2, s2 = pal["pairs"][1 % len(pal["pairs"])]
+        t = max(10, h * 0.055)
+        inset = h * 0.07
+        sticks = [(w * 0.18, inset, w * 0.64, t), (w * 0.18, h - inset - t, w * 0.64, t),
+                  (inset * 1.2, h * 0.2, t, h * 0.6), (w - inset * 1.2 - t, h * 0.2, t, h * 0.6)]
+        for (x, y, sw, sh) in sticks:
+            out.append(f'<div class="shape-el" style="position:absolute;left:{x:.0f}px;top:{y:.0f}px;width:{sw:.0f}px;height:{sh:.0f}px;'
+                       f'border-radius:{t:.0f}px;background:{fill};box-shadow:0 0 0 {outline * 0.7:.0f}px {stroke};z-index:1"></div>')
+        cd = h * 0.24
+        out.append(f'<div class="shape-el" style="position:absolute;left:{w * 0.66:.0f}px;top:{h * 0.13:.0f}px;width:{cd:.0f}px;height:{cd:.0f}px;'
+                   f'border-radius:50%;background:{f2};box-shadow:0 0 0 {outline:.0f}px {s2};z-index:1"></div>')
+        out.append(f'<img class="photo cutout" src="{escape(image)}" alt="" style="position:absolute;left:50%;bottom:0;'
+                   f'transform:translateX(-50%);height:{h * 0.86:.0f}px;max-width:{w * 0.7:.0f}px;object-fit:contain;'
+                   f'object-position:bottom center;z-index:10">')
+        return pal["bg"], "".join(out)
     if cut:
         # одно фото человека — обтравка: стоит на нижнем крае блока поверх графики, без рамки (гайдбук «Фото»)
         out.append(f'<img class="photo cutout" src="{escape(image)}" alt="" style="position:absolute;'
