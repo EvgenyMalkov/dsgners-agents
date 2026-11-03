@@ -6,6 +6,9 @@ from core import common_tools as ct
 from core.agent import Ctx
 from core.seo import page, store
 
+MAX_STEPS = 26      # статья: поиск конкурентов, чтение, ссылки, текст, SEO-пакет, обложка
+MAX_TOKENS = 20000  # текст статьи целиком уходит одним save_document
+
 TOOLS = [
     {
         "name": "check_site",
@@ -39,6 +42,25 @@ TOOLS = [
                        "(Article: headline, image, datePublished, author; BreadcrumbList: itemListElement).",
         "input_schema": {"type": "object", "properties": {"jsonld": {"type": "string"}}, "required": ["jsonld"]},
     },
+    {
+        "name": "submit_plan",
+        "description": "Сдать ПЛАН статьи на согласование (этап 1 навыка «Написать статью»). После «Ок» владельца "
+                       "система сама запустит этап 2 — написание по этому плану. После submit_plan вызови finish.",
+        "input_schema": {"type": "object", "properties": {
+            "title": {"type": "string", "description": "рабочий заголовок статьи"},
+            "main_query": {"type": "string"},
+            "plan": {"type": "string", "description": "весь план в Markdown: запросы, конкуренты, преимущество, H2/H3, объём"},
+        }, "required": ["title", "main_query", "plan"]},
+    },
+    {
+        "name": "propose_rules",
+        "description": "Предложить новые правила для себя по итогам разбора результатов. После «Ок» владельца "
+                       "правила автоматически добавятся в твои правила. Только подтверждённые данными выводы.",
+        "input_schema": {"type": "object", "properties": {
+            "rules": {"type": "array", "items": {"type": "string"},
+                      "description": "3–7 правил, каждое — конкретное указание, как писать/оформлять, с опорой на цифры"},
+        }, "required": ["rules"]},
+    },
     ct.READ_PAGE,
     ct.SAVE_DOCUMENT,
     ct.ask_colleague_tool({
@@ -47,6 +69,12 @@ TOOLS = [
     }),
     ct.FINISH,
 ]
+
+# поиск в интернете на стороне Anthropic (~1 цент за поиск) — для анализа конкурентов и проверки фактов.
+# Должен быть включён в console.anthropic.com (настройки организации); выключить: WEB_SEARCH=0 в .env
+from core import config as _cfg  # noqa: E402
+if _cfg.WEB_SEARCH:
+    TOOLS.insert(len(TOOLS) - 4, {"type": "web_search_20250305", "name": "web_search", "max_uses": 6})
 
 
 def system_extra() -> str:
@@ -170,7 +198,22 @@ async def validate_jsonld(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": f"Разметка в порядке. Типы: {types}"}]
 
 
-HANDLERS = {"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
+async def submit_plan(inp: dict, ctx: Ctx):
+    (ctx.job_dir / "plan.md").write_text(f"# План: {inp['title']}\nГлавный запрос: {inp['main_query']}\n\n{inp['plan']}", "utf-8")
+    ctx.meta.update(stage="plan", title=inp["title"], main_query=inp["main_query"])
+    if ctx.progress:
+        await ctx.progress("план статьи готов")
+    return [{"type": "text", "text": "План сохранён. Теперь вызови finish — владелец согласует план."}]
+
+
+async def propose_rules(inp: dict, ctx: Ctx):
+    rules = [r.strip() for r in inp.get("rules", []) if r.strip()][:10]
+    ctx.meta["rules"] = rules
+    (ctx.job_dir / "rules.md").write_text("# Предлагаемые правила\n\n" + "\n".join(f"- {r}" for r in rules), "utf-8")
+    return [{"type": "text", "text": f"Предложено правил: {len(rules)}. После «Ок» владельца они вступят в силу."}]
+
+
+HANDLERS = {"submit_plan": submit_plan, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
             "validate_jsonld": validate_jsonld}
 
 

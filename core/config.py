@@ -18,6 +18,7 @@ PRICE_OUT = float(os.getenv("PRICE_OUT", "10"))
 MONTHLY_LIMIT_USD = float(os.getenv("MONTHLY_LIMIT_USD", "50"))
 
 MAX_STEPS = int(os.getenv("MAX_STEPS", "14"))
+WEB_SEARCH = os.getenv("WEB_SEARCH", "1") == "1"   # поиск в интернете для SEO-агента (конкуренты, факты)
 
 # ИИ-офис (веб)
 OFFICE_TOKEN = os.getenv("OFFICE_TOKEN", "")

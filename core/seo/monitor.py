@@ -438,7 +438,8 @@ async def weekly() -> tuple[str, Path | None]:
 # ---------------- сводка для /seo_status ----------------
 
 def status_text() -> str:
-    names = {"hourly": "каждый час", "new_pages": "новые страницы", "daily": "ежедневно", "weekly": "раз в неделю"}
+    names = {"hourly": "каждый час", "new_pages": "новые страницы", "daily": "ежедневно", "weekly": "раз в неделю",
+             "monthly": "разбор за месяц"}
     lines = [f"🔎 SEO-мониторинг {config.SEO_SITE}"]
     for r in store.runs():
         when = dt.datetime.fromtimestamp(r["ts"]).strftime("%d.%m %H:%M")
@@ -450,3 +451,89 @@ def status_text() -> str:
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
     lines.append("IndexNow: " + ("подключён" if config.INDEXNOW_KEY else "нет ключа"))
     return "\n".join(lines)
+
+
+# ---------------- раз в месяц: разбор результатов и обучение ----------------
+
+async def monthly() -> str:
+    """Что из статей собирает поисковый трафик, а что нет → эталоны агенту и предложение новых правил.
+
+    1. Топ статей по поисковому трафику за 30 дней → документ «Лучшие статьи» в знаниях SEO-агента (он видит их в каждой задаче).
+    2. Статьи, которые агент оформлял 30+ дней назад: трафик до и после.
+    3. Запросы из Вебмастера: где мы растём, где рядом с топом.
+    4. Задача SEO-агенту: найти закономерности и предложить правила (propose_rules) — после «Ок» они вступят в силу.
+    """
+    if not (apis.has_yandex() and config.METRIKA_COUNTER_ID):
+        return "нужна Метрика (YANDEX_OAUTH_TOKEN и METRIKA_COUNTER_ID) — разбор пропущен"
+    today = dt.date.today()
+    end = today - dt.timedelta(days=1)
+    cur = {page.norm(u): v for u, v in (await apis.organic_by_page(end - dt.timedelta(days=29), end, 5000) or {}).items()}
+    prev = {page.norm(u): v for u, v in (await apis.organic_by_page(end - dt.timedelta(days=59), end - dt.timedelta(days=30), 5000) or {}).items()}
+    rows = {r["url"]: r for r in (dict(x) for x in store.db().execute(
+        "SELECT url, title, h1, first_seen, optimized FROM urls WHERE in_sitemap=1"))}
+    content = {u: r for u, r in rows.items() if is_content(u)}
+
+    top = sorted(((u, v) for u, v in cur.items() if u in content), key=lambda x: -x[1])[:15]
+    from core import knowledge
+    kd = knowledge.kdir("seo") / "docs"
+    kd.mkdir(parents=True, exist_ok=True)
+    if top:
+        (kd / "top-articles.md").write_text(
+            f"Лучшие статьи dsgners по поисковому трафику за 30 дней (обновлено {today:%d.%m.%Y}). "
+            "Это эталоны: когда пишешь или оформляешь статью, смотри, как устроены они (read_page).\n\n"
+            + "\n".join(f"- {content[u]['title'] or content[u]['h1'] or '(без заголовка)'} — {u} — {v} визитов из поиска" for u, v in top),
+            "utf-8")
+
+    month_ago = time.time() - 30 * 86400
+    ours = [(u, r) for u, r in content.items() if r.get("optimized") and r["optimized"] < month_ago]
+    L = [f"# Разбор результатов SEO за месяц — {today:%d.%m.%Y}", "",
+         f"Поисковый трафик на статьи за 30 дней: {sum(v for u, v in cur.items() if u in content)} визитов "
+         f"(30 дней до этого: {sum(v for u, v in prev.items() if u in content)}).", ""]
+    if top:
+        L.append("## Топ статей по трафику из поиска")
+        L += [f"- {v} визитов (было {prev.get(u, 0)}) — {content[u]['title'] or '(без заголовка)'} — {u}" for u, v in top]
+        L.append("")
+    grew = sorted(((u, prev.get(u, 0), v) for u, v in cur.items() if u in content and v >= prev.get(u, 0) + 20),
+                  key=lambda x: x[1] - x[2])[:10]
+    fell = sorted(((u, p, cur.get(u, 0)) for u, p in prev.items() if u in content and p >= 30 and cur.get(u, 0) < p * 0.7),
+                  key=lambda x: x[2] - x[1])[:10]
+    if grew:
+        L.append("## Выросли сильнее всего")
+        L += [f"- {p} → {c} — {content[u]['title'] or '(без заголовка)'} — {u}" for u, p, c in grew]
+        L.append("")
+    if fell:
+        L.append("## Просели больше чем на 30%")
+        L += [f"- {p} → {c} — {content[u]['title'] or '(без заголовка)'} — {u}" for u, p, c in fell]
+        L.append("")
+    if ours:
+        L.append("## Статьи, которые ты оформлял (30+ дней назад): трафик за 30 дней")
+        L += [f"- {cur.get(u, 0)} визитов (до этого {prev.get(u, 0)}) — {r['title'] or '(без заголовка)'} — {u}"
+              for u, r in sorted(ours, key=lambda x: -cur.get(x[0], 0))[:30]]
+        L.append("")
+    try:
+        qs = await apis.wm_queries(28) or []
+        if qs:
+            L.append("## Запросы из Вебмастера за 4 недели (топ по показам)")
+            L += [f"- «{q['query']}» — позиция {q['pos']:.1f}, показов {q['shows']}, кликов {q['clicks']}" for q in qs[:40]]
+            L.append("")
+    except Exception as e:
+        L.append(f"_Вебмастер недоступен: {e}_")
+    report = "\n".join(L)
+    out = config.OUTBOX / "seo-monthly" / f"seo-review-{today:%Y-%m}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(report, "utf-8")
+    await say(f"📈 Месячный разбор SEO: трафик на статьи за 30 дней — "
+              f"{sum(v for u, v in cur.items() if u in content)} визитов. Топ-{len(top)} статей стали эталонами для агента; "
+              "выводы и новые правила пришлёт SEO-шник.", [out])
+    if _start_job:
+        _start_job("seo", f"Разбор результатов за месяц ({today:%m.%Y}): выводы и правила", "monitor",
+                   "Ниже данные о поисковом трафике статей dsgners за месяц. Задача — понять, какие статьи и почему "
+                   "собирают трафик, и чему научиться.\n"
+                   "1. read_page 3–5 лучших статей и 3–5 просевших/слабых. Сравни: тип запроса (информационный, "
+                   "подборка, сравнение, кейс), структура, объём, ответ в начале, примеры работ, свежесть, оформление.\n"
+                   "2. save_document «review»: 3–6 закономерностей, каждая — с конкретными статьями и цифрами из данных. "
+                   "Что обновить в первую очередь (просевшие статьи с потенциалом) и какие темы стоит писать.\n"
+                   "3. propose_rules: 3–7 правил для себя, только подтверждённые данными. Формат — конкретное указание "
+                   "(«в подборках инструментов — таблица сравнения с ценами в начале»), а не общие слова.\n"
+                   "Если данных мало для выводов — так и скажи, правила не выдумывай.\n4. finish.\n\n" + report[:30000])
+    return f"статей с трафиком {len(top)}, оформленных агентом {len(ours)}"

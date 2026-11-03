@@ -35,9 +35,10 @@ HELP = (
     "/seo задача — SEO-шник (аудит, мета-теги, тексты, ТЗ)\n\n"
     "Картинку можно прислать с подписью-задачей (тоже с командой, если не дизайнеру).\n\n"
     "/seo_status — SEO-мониторинг: когда что проверялось и какие проблемы\n"
-    "/seo_scan hourly|new|daily|weekly — запустить проверку сайта сейчас\n"
+    "/seo_scan hourly|new|daily|weekly|monthly — запустить проверку или разбор сейчас\n"
     "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
-    "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n\n"
+    "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n"
+    "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n\n"
     "/office — ссылка на ИИ-офис\n"
     "/rules [smm|web|seo] — правила, выученные из твоих правок\n"
     "/spend — расходы на API за месяц\n"
@@ -116,7 +117,8 @@ async def spend_cmd(m: Message):
     await m.answer(f"Расход за месяц: ${spend.this_month():.2f} из ${config.MONTHLY_LIMIT_USD:.0f}\n" + "\n".join(parts))
 
 
-SCAN = {"hourly": "hourly", "new": "new_pages", "new_pages": "new_pages", "daily": "daily", "weekly": "weekly"}
+SCAN = {"hourly": "hourly", "new": "new_pages", "new_pages": "new_pages", "daily": "daily", "weekly": "weekly",
+        "monthly": "monthly", "month": "monthly"}
 
 
 @dp.message(Command("seo_status"))
@@ -132,10 +134,11 @@ async def seo_scan(m: Message):
     arg = (m.text or "").partition(" ")[2].strip().lower() or "hourly"
     name = SCAN.get(arg)
     if not name:
-        await m.answer("Варианты: /seo_scan hourly | new | daily | weekly")
+        await m.answer("Варианты: /seo_scan hourly | new | daily | weekly | monthly")
         return
-    if name == "weekly":
-        await m.answer("Запустил полный обход сайта — это может занять до часа, отчёт пришлю.")
+    if name in ("weekly", "monthly"):
+        await m.answer("Запустил — это может занять до часа, отчёт пришлю." if name == "weekly"
+                       else "Запустил разбор за месяц — отчёт и выводы пришлю.")
         asyncio.create_task(seo_scheduler.run(name))
         return
     await m.answer(f"Проверяю ({arg})…")
@@ -189,6 +192,40 @@ async def seo_notify(text: str, files: list):
 
 def seo_start_job(agent: str, task: str, source: str, full_task: str) -> str:
     return runner.start_job(agent, task, source=source, full_task=full_task)
+
+
+async def seo_after_approve(job: dict):
+    """«Ок» на план статьи → SEO-шник пишет текст; «Ок» на правила из разбора → правила вступают в силу."""
+    meta = job.get("meta") or {}
+    if job["agent"] != "seo":
+        return
+    if meta.get("stage") == "plan":
+        plan_file = next((config.OUTBOX / f for f in job["files"] if f.endswith("/plan.md")), None)
+        plan = plan_file.read_text("utf-8") if plan_file and plan_file.exists() else ""
+        title = meta.get("title") or job["task"]
+        runner.start_job("seo", f"Статья: {title}", source="telegram", parent=job["id"],
+                         full_task=f"Статья по утверждённому плану (навык «Написать статью», этап 2).\n\n"
+                                   f"Исходная задача: {job['task']}\n\n{plan}")
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, f"✍️ План принят — SEO-шник пишет статью «{title}». Пришлю текст и SEO-пакет.")
+    if meta.get("rules"):
+        for r in meta["rules"]:
+            feedback.add_rule("seo", r, "месячный разбор результатов")
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, f"📌 Добавил SEO-шнику правил: {len(meta['rules'])}. Посмотреть: /rules seo")
+
+
+@dp.message(Command("article"))
+async def article(m: Message):
+    if not is_owner(m):
+        return
+    topic = (m.text or "").partition(" ")[2].strip()
+    if not topic:
+        await m.answer("Пример: /article как собрать портфолио дизайнеру без опыта\n"
+                       "Можно добавить ссылки на работы авторов dsgners, которые стоит показать в статье.")
+        return
+    await _start(m, "seo", f"Статья: {topic}",
+                 f"Написать статью: {topic}\n\nИспользуй навык «Написать статью» — сейчас этап 1, только план.")
 
 
 @dp.message(F.photo | F.document)
@@ -337,6 +374,7 @@ async def main():
     BOT = Bot(config.TELEGRAM_BOT_TOKEN)
     runner.on_review(send_review)
     runner.on_approved(publish_posts)
+    runner.on_approved(seo_after_approve)
     await dp.start_polling(BOT)
 
 

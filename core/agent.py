@@ -124,10 +124,11 @@ async def run_agent(agent: str, task: str, progress=None, job_id: str | None = N
     cost = 0.0
     final_text = ""
 
-    for _ in range(config.MAX_STEPS):
+    # агент может поднять лимиты у себя в tools.py (длинные статьи требуют больше шагов и токенов)
+    for _ in range(getattr(tools_mod, "MAX_STEPS", config.MAX_STEPS)):
         _prune_old_images(messages)
         resp = await client.messages.create(
-            model=config.MODEL, max_tokens=8192, system=system, tools=tools, messages=messages,
+            model=config.MODEL, max_tokens=getattr(tools_mod, "MAX_TOKENS", 8192), system=system, tools=tools, messages=messages,
         )
         cost += spend.record(agent, resp.usage)
         messages.append({"role": "assistant", "content": [b.model_dump(exclude_none=True) for b in resp.content]})

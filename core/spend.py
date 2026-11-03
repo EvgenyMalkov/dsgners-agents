@@ -12,8 +12,10 @@ def record(agent: str, usage) -> float:
     out = getattr(usage, "output_tokens", 0) or 0
     cw = getattr(usage, "cache_creation_input_tokens", 0) or 0
     cr = getattr(usage, "cache_read_input_tokens", 0) or 0
+    stu = getattr(usage, "server_tool_use", None)
+    searches = (getattr(stu, "web_search_requests", 0) or 0) if stu else 0
     usd = (inp * config.PRICE_IN + cw * config.PRICE_IN * 1.25 + cr * config.PRICE_IN * 0.1
-           + out * config.PRICE_OUT) / 1_000_000
+           + out * config.PRICE_OUT) / 1_000_000 + searches * 0.01   # поиск — $10 за 1000
     with LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps({"ts": dt.datetime.now().isoformat(timespec="seconds"), "agent": agent,
                             "in": inp, "out": out, "cache_w": cw, "cache_r": cr, "usd": round(usd, 5)}) + "\n")

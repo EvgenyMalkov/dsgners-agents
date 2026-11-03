@@ -38,6 +38,8 @@ def due(name: str, now: dt.datetime | None = None) -> bool:
         return time.time() - last >= 1800
     if name == "daily":
         return (now.hour, now.minute) >= (8, 30) and (not last or _local(last).date() < now.date())
+    if name == "monthly":
+        return now.day == 1 and now.hour >= 10 and (not last or _local(last).strftime("%Y-%m") < now.strftime("%Y-%m"))
     if name == "weekly":
         if now.weekday() != 0 or now.hour < 9:
             return False
@@ -50,6 +52,7 @@ JOBS = {
     "new_pages": monitor.new_pages,
     "daily": monitor.daily,
     "weekly": monitor.weekly,
+    "monthly": monitor.monthly,
 }
 
 
@@ -80,13 +83,13 @@ async def loop():
         return
     await asyncio.sleep(20)  # дать боту подняться
     # robots.txt нужен new_pages, чтобы найти sitemap — поэтому часовая проверка первой
-    order = ["hourly", "new_pages", "daily", "weekly"]
+    order = ["hourly", "new_pages", "daily", "weekly", "monthly"]
     while True:
         for name in order:
             try:
                 if name not in _running and due(name):
-                    if name == "weekly":
-                        asyncio.create_task(run(name))   # долгий — в фоне
+                    if name in ("weekly", "monthly"):
+                        asyncio.create_task(run(name))   # долгие — в фоне
                     else:
                         await run(name)
             except Exception:
