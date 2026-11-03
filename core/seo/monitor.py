@@ -63,6 +63,21 @@ def ignored(url: str) -> bool:
     return bool(config.SEO_IGNORE_PATTERN and re.search(config.SEO_IGNORE_PATTERN, url))
 
 
+def author_of(url: str) -> str:
+    """dsgners.ru/<автор>/<номер>-<адрес> → <автор>."""
+    parts = urlparse(url).path.strip("/").split("/")
+    return parts[0].lower() if len(parts) >= 2 else ""
+
+
+def is_own(url: str) -> bool:
+    """Статья редакции (SEO_OWN_AUTHORS) — её можно переписывать; остальные — статьи авторов."""
+    return author_of(url) in config.SEO_OWN_AUTHORS
+
+
+def owner_tag(url: str) -> str:
+    return "[наша]" if is_own(url) else f"[автор: {author_of(url)}]"
+
+
 def is_content(url: str) -> bool:
     """Статья, новость, список — то, что стоит оформлять под поиск."""
     if ignored(url):
@@ -178,7 +193,10 @@ def start_optimize(url: str, rep: page.PageReport, auto: bool) -> str | None:
     if not _start_job:
         return None
     task = f"Оформить для поиска: {url}"
-    full = (f"{task}\n\nИспользуй навык optimize-article.\n"
+    who = ("Это статья редакции dsgners — можно предлагать правки текста (лид, подзаголовки)." if is_own(url) else
+           f"Это статья автора {author_of(url)}: текст не меняем. Только SEO-поля (title, description, alt, OG, разметка) "
+           "и, если в тексте есть что улучшить, — короткие рекомендации автору (документ «author-letter»).")
+    full = (f"{task}\n\nИспользуй навык optimize-article.\n{who}\n"
             f"{'Статья только что вышла — найдена мониторингом.' if auto else ''}\n\n"
             f"# Что уже есть на странице (автопроверка)\n{rep.summary()}")
     jid = _start_job("seo", task, "monitor" if auto else "telegram", full)
@@ -566,7 +584,10 @@ async def content_plan() -> str:
     today = dt.date.today()
     ours = _our_titles()
     titles = [f"{r['title']} {r['h1']}" for r in ours]
-    L = [f"# Данные для контент-плана — {today:%d.%m.%Y}", ""]
+    L = [f"# Данные для контент-плана — {today:%d.%m.%Y}", "",
+         f"Редакция dsgners — профили: {', '.join(sorted(config.SEO_OWN_AUTHORS))}. Только их статьи можно обновлять (kind=update). "
+         "Статьи авторов — kind=author: SEO-поля + рекомендации автору, текст не переписываем. "
+         "Новую статью на тему, которую уже закрывает статья автора, не пиши — это каннибализация; бери kind=author.", ""]
 
     qs = store.get("wm_queries") or []
     if not qs and apis.has_yandex():
@@ -598,12 +619,12 @@ async def content_plan() -> str:
                            if is_content(u) and p >= 20 and cur.get(u, 0) < p * 0.75), key=lambda x: x[2] - x[1])[:15]
             if fell:
                 L.append("## Статьи, которые теряют поисковый трафик (Метрика, 4 недели к 4 неделям) — кандидаты на обновление")
-                L += [f"- {p} → {c} визитов — {tmap.get(u, '')} — {u}" for u, p, c in fell]
+                L += [f"- {p} → {c} визитов — {owner_tag(u)} {tmap.get(u, '')} — {u}" for u, p, c in fell]
                 L.append("")
             best = sorted(((u, v) for u, v in cur.items() if is_content(u)), key=lambda x: -x[1])[:10]
             if best:
                 L.append("## Что собирает трафик сейчас (темы и форматы, которые работают)")
-                L += [f"- {v} визитов — {tmap.get(u, '')} — {u}" for u, v in best]
+                L += [f"- {v} визитов — {owner_tag(u)} {tmap.get(u, '')} — {u}" for u, v in best]
                 L.append("")
         except Exception as e:
             L.append(f"_Метрика недоступна: {e}_")
@@ -620,8 +641,9 @@ async def content_plan() -> str:
         L.append("## Темы, которые уже брали в работу (не повторять)")
         L += [f"- {h['date']}: {h['title']}" for h in hist[-40:]]
         L.append("")
-    L.append(f"## Наши статьи (последние {min(len(ours), 120)} заголовков — чтобы не писать дубли)")
-    L += [f"- {r['title'] or r['h1']} — {r['url']}" for r in ours[:120]]
+    L.append(f"## Статьи на сайте (последние {min(len(ours), 120)} заголовков — чтобы не писать дубли; "
+             "[наша] — редакция, [автор: …] — статьи авторов)")
+    L += [f"- {owner_tag(r['url'])} {r['title'] or r['h1']} — {r['url']}" for r in ours[:120]]
     data = "\n".join(L)
 
     out = config.OUTBOX / "seo-plan" / f"content-data-{today:%Y-%m-%d}.md"

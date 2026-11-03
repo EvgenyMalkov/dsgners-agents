@@ -201,6 +201,8 @@ async def seo_after_approve(job: dict):
     meta = job.get("meta") or {}
     if job["agent"] != "seo":
         return
+    if meta.get("stage") == "plan" and job["task"].startswith("Автору"):
+        meta = dict(meta, stage=None)   # статью автора не переписываем никогда — только SEO-поля и письмо
     if meta.get("stage") == "plan":
         plan_file = next((config.OUTBOX / f for f in job["files"] if f.endswith("/plan.md")), None)
         plan = plan_file.read_text("utf-8") if plan_file and plan_file.exists() else ""
@@ -214,12 +216,22 @@ async def seo_after_approve(job: dict):
     if meta.get("topics"):
         topics = meta["topics"][: config.SEO_TOPICS_PER_WEEK + 3]
         for t in topics:
-            if t.get("kind") == "update" and t.get("url"):
-                task, body = f"Обновить: {t['title']}", f"Обновить статью {t['url']}"
+            if t.get("kind") in ("update", "author") and t.get("url") and not seo_monitor.is_own(t["url"]):
+                t["kind"] = "author"
+            if t.get("kind") == "author" and t.get("url"):
+                task = f"Автору: {t['title']}"
+                body = (f"Статья автора {seo_monitor.author_of(t['url'])}: {t['url']}\n\n"
+                        "Используй навык «Рекомендации автору»: SEO-поля + письмо автору, текст не переписывай.")
+            elif t.get("kind") == "update" and t.get("url"):
+                task = f"Обновить: {t['title']}"
+                body = (f"Обновить статью редакции {t['url']}\n\n"
+                        "Используй навык «Написать статью» — сейчас этап 1, только план.")
             else:
-                task, body = f"Статья: {t['title']}", f"Написать статью «{t['title']}»"
+                task = f"Статья: {t['title']}"
+                body = (f"Написать статью «{t['title']}» (публикуется в профиле редакции)\n\n"
+                        "Используй навык «Написать статью» — сейчас этап 1, только план.")
             runner.start_job("seo", task, source="content_plan", parent=job["id"], full_task=(
-                f"{body}\n\nИспользуй навык «Написать статью» — сейчас этап 1, только план.\n"
+                f"{body}\n"
                 f"Главный запрос: {t.get('main_query', '')}\nПочему эта тема: {t.get('why', '')}\n"
                 f"Чем будем лучше топа: {t.get('angle', '')}"))
         seo_monitor.remember_topics(topics)

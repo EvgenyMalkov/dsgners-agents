@@ -75,10 +75,12 @@ TOOLS = [
                        "автоматически запустится написание плана статьи. После propose_topics — save_document и finish.",
         "input_schema": {"type": "object", "properties": {"topics": {"type": "array", "items": {
             "type": "object", "properties": {
-                "kind": {"type": "string", "enum": ["new", "update"]},
+                "kind": {"type": "string", "enum": ["new", "update", "author"],
+                         "description": "new — новая статья редакции; update — обновить статью РЕДАКЦИИ; "
+                                        "author — статья автора: SEO-поля + рекомендации автору"},
                 "title": {"type": "string"},
                 "main_query": {"type": "string"},
-                "url": {"type": "string", "description": "адрес статьи — для update"},
+                "url": {"type": "string", "description": "адрес статьи — для update и author"},
                 "why": {"type": "string", "description": "почему, с цифрами из данных"},
                 "angle": {"type": "string", "description": "чем будет лучше топа"},
             }, "required": ["kind", "title", "main_query", "why", "angle"]}}}, "required": ["topics"]},
@@ -263,11 +265,15 @@ async def keyword_data(inp: dict, ctx: Ctx):
 
 
 async def propose_topics(inp: dict, ctx: Ctx):
+    from core.seo import monitor
     topics = [t for t in inp.get("topics", []) if t.get("title")][:10]
+    for t in topics:   # обновлять можно только статьи редакции — чужую статью переводим в «рекомендации автору»
+        if t.get("kind") == "update" and t.get("url") and not monitor.is_own(t["url"]):
+            t["kind"] = "author"
     ctx.meta["topics"] = topics
     md = ["# Контент-план", ""]
     for i, t in enumerate(topics, 1):
-        kind = "Обновить" if t.get("kind") == "update" else "Новая"
+        kind = {"update": "Обновить", "author": "Автору"}.get(t.get("kind"), "Новая")
         md += [f"## {i}. {kind}: {t['title']}", f"Запрос: {t.get('main_query', '')}" + (f" · {t['url']}" if t.get("url") else ""),
                f"Почему: {t.get('why', '')}", f"Угол: {t.get('angle', '')}", ""]
     (ctx.job_dir / "topics.md").write_text("\n".join(md), "utf-8")

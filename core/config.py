@@ -40,6 +40,9 @@ SEO_IGNORE_PATTERN = os.getenv("SEO_IGNORE_PATTERN", r"/(login|auth|signup|regis
 SEO_CRAWL_RPS = float(os.getenv("SEO_CRAWL_RPS", "1.5"))          # запросов в секунду при обходе
 SEO_CRAWL_MAX = int(os.getenv("SEO_CRAWL_MAX", "5000"))          # максимум страниц за недельный обход
 SEO_AUTO_OPTIMIZE_PER_DAY = int(os.getenv("SEO_AUTO_OPTIMIZE_PER_DAY", "10"))  # авто-оформление новых статей
+# Профили редакции (первая часть адреса статьи). Их статьи агент обновляет сам; статьи остальных авторов —
+# только SEO-поля и рекомендации автору, текст не трогаем. Несколько — через запятую.
+SEO_OWN_AUTHORS = {a.strip().lower() for a in os.getenv("SEO_OWN_AUTHORS", "dsgners_study").split(",") if a.strip()}
 SEO_TOPICS_PER_WEEK = int(os.getenv("SEO_TOPICS_PER_WEEK", "5"))   # тем в недельном контент-плане
 # 1 — планы статей из контент-плана принимаются автоматически (ты согласуешь только список тем и готовый текст)
 SEO_AUTO_PLANS = os.getenv("SEO_AUTO_PLANS", "0") == "1"
