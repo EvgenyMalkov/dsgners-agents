@@ -101,15 +101,10 @@ def _cache_tail(messages: list) -> None:
         last[-1]["cache_control"] = {"type": "ephemeral"}
 
 
-def _prune_old_images(messages: list) -> None:
-    """Старые картинки в истории заменяем текстом — модель видит только свежий рендер."""
-    for msg in messages[:-1]:
-        if msg["role"] != "user" or not isinstance(msg["content"], list):
-            continue
-        for part in msg["content"]:
-            if part.get("type") == "tool_result" and isinstance(part.get("content"), list):
-                part["content"] = [c if c.get("type") != "image" else {"type": "text", "text": "[старый рендер скрыт]"}
-                                   for c in part["content"]]
+# История шагов НЕ меняется задним числом: модель «думает» (thinking), и API проверяет, что всё, что было
+# до её размышлений, осталось байт-в-байт тем же. Раньше старые картинки заменялись текстом — это ломало
+# запросы («Invalid signature in thinking block»). Расход держим кешем истории (_cache_tail): старые
+# картинки читаются из кеша по 0.1 цены.
 
 
 async def _use_skill(inp: dict, ctx: Ctx):
@@ -142,7 +137,6 @@ async def run_agent(agent: str, task: str, progress=None, job_id: str | None = N
 
     # агент может поднять лимиты у себя в tools.py (длинные статьи требуют больше шагов и токенов)
     for _ in range(getattr(tools_mod, "MAX_STEPS", config.MAX_STEPS)):
-        _prune_old_images(messages)
         _cache_tail(messages)
         resp = await client.messages.create(
             model=model, max_tokens=getattr(tools_mod, "MAX_TOKENS", 8192), system=system, tools=tools, messages=messages,
