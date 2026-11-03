@@ -140,6 +140,8 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     meta = idx[template]
     W, H = meta["size"]
     ctx = {k: v for k, v in data.items() if v not in (None, "", [])}
+    if meta.get("kind") == "showcase":
+        return await _render_showcase(template, meta, ctx, out_png)
     for k in ("title", "subtitle", "rubric", "date", "author"):
         if isinstance(ctx.get(k), str):
             ctx[k] = typograf(ctx[k])
@@ -190,6 +192,72 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
         finally:
             await browser.close()
     return warn + issues
+
+
+async def _render_showcase(template: str, meta: dict, ctx: dict, out_png: Path) -> list[str]:
+    """Витрина скриншотов по гайдбуку («Находки»): фон, логотип, экран(ы) в рамке, шейпы по углам."""
+    from core import brandgfx
+    fmt = ctx.get("format", "16:9")
+    W, H = meta.get("formats", {}).get(fmt, meta["size"])
+    pals = brandgfx.palettes()
+    pname = ctx.get("palette") or "lime"
+    bg = "#000000" if pname == "black" else (pals.get(pname) or pals["lime"])["bg"]
+    wide = W > H * 1.2
+    stroke = max(6, round((18 / 1920 if wide else 14 / 1080) * W))
+    phones = template == "showcase-phones"
+    issues: list[str] = []
+    if phones:
+        imgs = [i for i in (ctx.get("images") or ([ctx["image"]] if ctx.get("image") else [])) if i][:3 if wide else 2]
+    else:
+        imgs = [ctx["image"]] if ctx.get("image") else []
+    if not imgs:
+        issues.append("Нет картинки: для витрины нужен image (или images для showcase-phones).")
+    srcs = [_image_src(i) for i in imgs] or [None]
+    show_logo = not (phones and wide)
+    logo_w = round(W * (0.253 if wide else (0.36 if H <= W * 1.1 else 0.42)))
+    logo_h = round(logo_w * 21 / 135)
+    top_logo = round(H * 0.067) if H <= W * 1.1 else 230
+    cap_fs = round(W * (0.03 if wide else 0.045))
+    gap = round(H * (0.06 if wide else 0.04))
+    caption = typograf(ctx["caption"]) if isinstance(ctx.get("caption"), str) else ""
+    y0 = (top_logo + logo_h + gap) if show_logo else round(H * 0.06)
+    if caption:
+        y0 += round(cap_fs * 1.5)
+    frames = []
+    if phones:
+        n = len(srcs)
+        fw = round(W * (0.265 if wide else 0.4))
+        fh = round(H - y0 - H * (0.07 if wide else 0.0)) if wide else H
+        space = (W - n * fw) / (n + 1) if wide else (W - n * fw) / (n + 1)
+        for i, src in enumerate(srcs):
+            frames.append({"x": round(space + i * (fw + space)), "y": y0, "w": fw, "h": fh + (0 if wide else 200),
+                           "r": round(fw * 0.1), "src": src})
+    else:
+        fx = round(W * (0.125 if wide else 0.083))
+        frames.append({"x": fx, "y": y0, "w": W - 2 * fx, "h": H, "r": round(W * 0.025), "src": srcs[0]})
+    shapes = brandgfx.corner_shapes(W, H, motifs=ctx.get("motifs"), palette=ctx.get("palette") if ctx.get("palette") in pals else "pink",
+                                    outline=round(stroke * 0.8), seed=f"{caption}|{template}|{imgs}", bg=bg)
+    html = _env.get_template(f"{template}.html").render(
+        W=W, H=H, bg=bg, frames=frames, shapes=shapes, caption=caption, stroke=stroke,
+        logo_svg=(config.TEAM / "assets" / "logo.svg").read_text("utf-8") if show_logo else "",
+        logo_w=logo_w, logo_h=logo_h, top_logo=top_logo, cap_fs=cap_fs, gap=gap, font_css=brandgfx.font_css())
+    if not show_logo:
+        html = html.replace('<div class="logo"></div>', "")
+    out_png = out_png.resolve()
+    out_png.parent.mkdir(parents=True, exist_ok=True)
+    html_path = out_png.with_suffix(".html")
+    html_path.write_text(html, "utf-8")
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(args=["--allow-file-access-from-files"])
+        try:
+            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+            await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=30000)
+            issues += await page.evaluate(CHECK_JS, {"safe": meta.get("safe", 30)})
+            await page.locator("#canvas").screenshot(path=str(out_png))
+        finally:
+            await browser.close()
+    # шейпы по углам перекрывают рамку экрана намеренно — это не ошибка
+    return [i for i in issues if "наезжает" not in i]
 
 
 MOCKUP_CHECK_JS = r"""

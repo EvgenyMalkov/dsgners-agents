@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+{{ font_css|safe }}
+{% set s = W / 1920 if W > H else W / 1080 %}
+{% set dark = bg in ('#000000', '#16181C') %}
+{% set frame = '#D5F839' if dark else '#000000' %}
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{background:#808080}
+#canvas{position:relative;overflow:hidden;width:{{ W }}px;height:{{ H }}px;background:{{ bg }};font-family:'CoFo Sona','Golos Text',sans-serif}
+.logo{position:absolute;left:50%;transform:translateX(-50%);top:{{ top_logo }}px;width:{{ logo_w }}px;color:{{ '#FFFFFF' if dark else '#000000' }};z-index:5;line-height:0}
+.logo svg{width:100%;height:auto;display:block}
+.scr{position:absolute;overflow:hidden;background:#fff;border:{{ (stroke)|round|int }}px solid {{ frame }};z-index:2}
+.scr img{width:100%;height:100%;object-fit:cover;object-position:top center;display:block}
+.cap{position:absolute;left:50%;transform:translateX(-50%);top:{{ top_logo + logo_h + gap*0.35 }}px;font-size:{{ cap_fs }}px;line-height:1.05;
+  letter-spacing:-0.02em;color:{{ '#FFFFFF' if dark else '#000000' }};white-space:nowrap;z-index:5;max-width:{{ W*0.86 }}px;overflow:hidden;text-overflow:ellipsis}
+</style></head>
+<body><div id="canvas">
+{{ shapes|safe }}
+<div class="logo">{{ logo_svg|safe }}</div>
+{% if caption %}<div class="cap" data-fit data-min="{{ (cap_fs*0.6)|round|int }}">{{ caption }}</div>{% endif %}
+{% for f in frames %}
+<div class="scr" style="left:{{ f.x }}px;top:{{ f.y }}px;width:{{ f.w }}px;height:{{ f.h }}px;border-radius:{{ f.r }}px">
+  {% if f.src %}<img class="photo" src="{{ f.src }}" alt="">{% endif %}
+</div>
+{% endfor %}
+</div></body></html>

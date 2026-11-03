@@ -174,6 +174,42 @@ def font_css() -> str:
     return link + "<style>" + "".join(faces) + "</style>"
 
 
+def corner_shapes(w: int, h: int, *, motifs=None, palette="auto", outline=14, seed="", bg=None) -> str:
+    """Шейпы по углам «витрины» (гайдбук → Находки): зигзаг снизу слева, курсор справа, облачко снизу справа."""
+    rnd = random.Random(int(hashlib.md5(seed.encode()).hexdigest()[:8], 16))
+    pals = palettes()
+    pal = pals[palette] if palette in pals else pals[rnd.choice(list(pals))]
+    pairs = [p for p in pal["pairs"] if bg is None or p[0].lower() != bg.lower()] or pal["pairs"]
+    names = _pick_motifs(motifs or ["zigzag", "cursor", "cloud"], 3, rnd)
+    m = min(w, h)
+    wide = w > h * 1.2
+    # слоты: курсор — справа по центру поверх рамки; зигзаг — снизу слева; остальное — снизу справа (за рамкой)
+    slot_right = (w - (0.2 if wide else 0.13) * m, h * (0.5 if wide else 0.42), (0.24 if wide else 0.17) * m)
+    slot_bl = (-0.03 * w, h - 0.42 * m, (0.42 if wide else 0.3) * m)
+    slot_br = (w - (0.27 if wide else 0.2) * m, h - (0.24 if wide else 0.18) * m, (0.36 if wide else 0.28) * m)
+    order = sorted(names, key=lambda n: 0 if n == "cursor" else (1 if n == "zigzag" else 2))
+    slots = {}
+    free = [slot_right, slot_bl, slot_br]
+    for nm in order:
+        if nm == "cursor" and slot_right in free:
+            slots[nm] = slot_right
+        elif nm == "zigzag" and slot_bl in free:
+            slots[nm] = slot_bl
+        else:
+            slots[nm] = [x for x in free if x not in slots.values()][-1]
+        free = [x for x in free if x not in slots.values()]
+    out = []
+    for i, nm in enumerate(names):
+        fill, stroke = pairs[i % len(pairs)]
+        x, y, sz = slots[nm]
+        z = 3 if slots[nm] == slot_right else 1   # только правый элемент заходит поверх рамки
+        if nm == "zigzag":
+            out.append(_svg_shape(nm, x, y, sz * 0.9, sz * 1.15, fill, stroke, outline, -8, z=z))
+        else:
+            out.append(_svg_shape(nm, x, y, sz, sz, fill, stroke, outline, rnd.uniform(-12, 12), z=z))
+    return "".join(out)
+
+
 # ---------- обтравка фото человека (rembg, модель u2net_human_seg) ----------
 _session = None
 
