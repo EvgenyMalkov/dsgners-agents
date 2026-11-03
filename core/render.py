@@ -10,6 +10,9 @@ import json
 import re
 from pathlib import Path
 
+# Визуалы рендерим в 2x (ретина): иначе экраны и мелкий текст мылятся, особенно в повёрнутых карточках.
+SCALE = 2
+
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from playwright.async_api import async_playwright
 
@@ -187,7 +190,7 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     async with async_playwright() as p:
         browser = await p.chromium.launch(args=["--allow-file-access-from-files"])
         try:
-            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=SCALE)
             await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=30000)
             issues = await page.evaluate(CHECK_JS, {"safe": meta.get("safe", 48)})
             await page.locator("#canvas").screenshot(path=str(out_png))
@@ -229,7 +232,7 @@ async def _shoot(html: str, W: int, H: int, out_png: Path, safe: int) -> list[st
     async with async_playwright() as p:
         browser = await p.chromium.launch(args=["--allow-file-access-from-files"])
         try:
-            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=SCALE)
             await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=30000)
             issues = await page.evaluate(CHECK_JS, {"safe": safe})
             await page.locator("#canvas").screenshot(path=str(out_png))
@@ -295,7 +298,7 @@ async def _render_showcase(template: str, meta: dict, ctx: dict, out_png: Path) 
     async with async_playwright() as p:
         browser = await p.chromium.launch(args=["--allow-file-access-from-files"])
         try:
-            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=1)
+            page = await browser.new_page(viewport={"width": W, "height": H}, device_scale_factor=SCALE)
             await page.goto(html_path.as_uri(), wait_until="networkidle", timeout=30000)
             issues += await page.evaluate(CHECK_JS, {"safe": meta.get("safe", 30)})
             await page.locator("#canvas").screenshot(path=str(out_png))
