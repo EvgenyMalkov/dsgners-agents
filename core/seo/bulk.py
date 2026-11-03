@@ -123,7 +123,7 @@ SYSTEM = """Ты — SEO-редактор dsgners.ru (платформа и ме
 
 Правила:
 - seo_title: 45–65 знаков. Главный запрос (как люди ищут эту тему) ближе к началу. Без капса, кликбейта и кавычек-ёлочек
-  по краям. « — dsgners» в конце только если влезает в 65.
+  по краям. Название сайта в конце сайт добавляет сам (« — дизайнерс») — в seo_title его не пиши.
 - meta_description: 120–160 знаков. О чём статья и чем полезна + конкретика из текста (цифра, «по шагам», «примеры»,
   название инструмента). Не повторяй title. Без «В этой статье…».
 - og_title / og_description: для превью в соцсетях — можно живее, но по фактам статьи.
@@ -139,7 +139,7 @@ def _imgs_without_alt(html: str, base: str, limit=15) -> list[dict]:
     for m in re.finditer(r"(?is)<img\b[^>]*>", html):
         tag = m.group(0)
         src = page.attr(tag, "src") or page.attr(tag, "data-src")
-        if not src or src.startswith("data:") or page.attr(tag, "alt"):
+        if not src or src.startswith("data:") or page.has_alt(tag):
             continue
         before = page.strip_html(html[max(0, m.start() - 1500):m.start()])[-250:]
         cap = re.search(r"(?is)<figcaption[^>]*>(.*?)</figcaption>", html[m.end():m.end() + 600])

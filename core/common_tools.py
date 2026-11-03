@@ -74,7 +74,7 @@ async def read_page(inp: dict, ctx: Ctx):
     links = [urljoin(final, _attr(a, "href")) for a in re.findall(r"(?is)<a\b[^>]*>", html) if _attr(a, "href")]
     internal = [l for l in links if urlparse(l).netloc == host]
     imgs = re.findall(r"(?is)<img\b[^>]*>", html)
-    no_alt = [urljoin(final, _attr(i, "src")) for i in imgs if not _attr(i, "alt")]
+    no_alt = [urljoin(final, _attr(i, "src")) for i in imgs if not re.search(r"(?i)[\s<]alt\s*=", i)]  # alt="" — декор, не ошибка
     text = _strip(html)
 
     out = [f"URL: {final} (HTTP {status})", f"title ({len(title)} симв.): {title}"]

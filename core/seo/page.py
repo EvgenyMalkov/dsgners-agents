@@ -104,6 +104,11 @@ def attr(tag: str, name: str) -> str:
     return unescape((m.group(2) if m.group(2) is not None else m.group(3) if m.group(3) is not None else m.group(4) or "").strip())
 
 
+def has_alt(tag: str) -> bool:
+    """alt есть, даже пустой: alt="" — правильная разметка декоративной картинки (подложки, фон), не ошибка."""
+    return bool(re.search(r"(?i)[\s<]alt\s*=", tag))
+
+
 def norm(url: str) -> str:
     """Адрес без #якоря и без хвостового слэша (кроме корня) — для сравнения."""
     u = urldefrag(url)[0]
@@ -251,7 +256,7 @@ def analyze(f: Fetched, is_article: bool = False) -> PageReport:
     rep.images = len(imgs)
     for i in imgs:
         src = attr(i, "src") or attr(i, "data-src")
-        if not attr(i, "alt") and src and not src.startswith("data:"):
+        if not has_alt(i) and src and not src.startswith("data:"):
             rep.images_no_alt.append(urljoin(f.final, src))
     seen = set()
     for a in re.findall(r"(?is)<a\b[^>]*>", html):
