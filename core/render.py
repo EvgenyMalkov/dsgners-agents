@@ -71,7 +71,20 @@ async ({safe}) => {
     }
   }
 
-  // 3. Картинки
+  // 3. Логотип не прилипает к тексту: зазор не меньше высоты логотипа
+  for (const lg of document.querySelectorAll('[data-logo], .logo')) {
+    const L = lg.getBoundingClientRect(); if (!L.width) continue;
+    for (const el of document.querySelectorAll('.t, .s, .title, .cap, .sub, .rubric, .author, .date')) {
+      if (lg.contains(el) || el.contains(lg) || !el.innerText.trim()) continue;
+      const r = document.createRange(); r.selectNodeContents(el);
+      for (const T of [...r.getClientRects()].filter(x => x.width > 0)) {
+        const dx = Math.max(0, L.left - T.right, T.left - L.right), dy = Math.max(0, L.top - T.bottom, T.top - L.bottom);
+        if (Math.max(dx, dy) < L.height * 0.9) { issues.push(`Логотип прилип к тексту «${short(el.innerText)}» — отодвинь (зазор не меньше высоты логотипа) или сократи текст`); break; }
+      }
+    }
+  }
+
+  // 4. Картинки
   for (const img of document.images) {
     if (!img.complete || img.naturalWidth === 0) { issues.push('Картинка не загрузилась: ' + img.getAttribute('src')); continue; }
     // мыло: исходник заметно меньше, чем место под него в 2x-рендере (с учётом object-fit: cover)
@@ -149,6 +162,8 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     meta = idx[template]
     W, H = meta["size"]
     ctx = {k: v for k, v in data.items() if v not in (None, "", [])}
+    # Логотип по умолчанию НЕ ставим (решение арт-директора) — только если в задаче явно попросили (show_logo: true)
+    ctx["hide_logo"] = ctx.pop("show_logo", False) is not True
     if meta.get("kind") == "showcase":
         return await _render_showcase(template, meta, ctx, out_png)
     if meta.get("kind") in ("collage", "digest", "poster", "promo", "promo-duo"):
@@ -227,6 +242,8 @@ async def _render_layout(meta: dict, ctx: dict, out_png: Path) -> list[str]:
         if isinstance(b, dict) and b.get("image"):
             b["image_src"] = _image_src(b["image"])
     html = layouts.BUILDERS[meta["kind"]](ctx, W, H, imgs)
+    if ctx.get("hide_logo"):
+        html = re.sub(r"<!--logo-->.*?<!--/logo-->", "", html, flags=re.S)
     return warn + await _shoot(html, W, H, out_png, meta.get("safe", 40))
 
 
@@ -267,7 +284,7 @@ async def _render_showcase(template: str, meta: dict, ctx: dict, out_png: Path) 
     if not imgs:
         issues.append("Нет картинки: для витрины нужен image (или images для showcase-phones).")
     srcs = [_image_src(i) for i in imgs] or [None]
-    show_logo = not (phones and wide)
+    show_logo = not (phones and wide) and not ctx.get("hide_logo")
     logo_w = round(W * (0.253 if wide else (0.36 if H <= W * 1.1 else 0.42)))
     logo_h = round(logo_w * 21 / 135)
     top_logo = round(H * 0.067) if H <= W * 1.1 else 230

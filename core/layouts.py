@@ -47,8 +47,8 @@ def _photo(src, x, y, d, shape, stroke, outline, z=5, w=None, h=None):
 def _logo(color: str, width: float, x: float, y: float) -> str:
     svg = (config.TEAM / "assets" / "logo.svg").read_text("utf-8")
     svg = svg.replace("<svg ", '<svg style="width:100%;height:auto;display:block" ', 1)
-    return (f'<div style="position:absolute;left:{x:.0f}px;top:{y:.0f}px;width:{width:.0f}px;color:{color};line-height:0;z-index:20">'
-            f'{svg}</div>')
+    return (f'<!--logo--><div data-logo style="position:absolute;left:{x:.0f}px;top:{y:.0f}px;width:{width:.0f}px;color:{color};'
+            f'line-height:0;z-index:20">{svg}</div><!--/logo-->')
 
 
 def _head(W, H, bg) -> str:
@@ -251,10 +251,14 @@ def promo(ctx: dict, W: int, H: int, imgs: list[str | None]) -> str:
     fs = round(W * (0.056 if wide else 0.09))
     outline = round(min(W, H) * 0.014)
     out = [_head(W, H, "#F1F1F3")]
-    out.append(f'<div class="t" data-fit data-min="{round(fs * 0.5)}" style="left:{pad:.0f}px;top:{pad:.0f}px;width:{lw - 2 * pad:.0f}px;'
-               f'max-height:{(lh - pad * 2) * (0.62 if wide else 0.7):.0f}px;font-size:{fs}px">{escape(ctx.get("title", ""))}</div>')
     logo_w = lw * 0.6 if wide else W * 0.32
-    out.append(_logo("#000000", logo_w, pad, (H - pad - logo_w * 21 / 135) if wide else (lh - pad - logo_w * 21 / 135)))
+    logo_h = logo_w * 21 / 135
+    logo_top = (H if wide else lh) - pad - logo_h
+    # с логотипом заголовку оставляем место до него с зазором в 1.5 высоты логотипа, без логотипа — вся панель
+    t_max = (logo_top - logo_h * 1.5 - pad) if not ctx.get("hide_logo") else ((H if wide else lh) - 2 * pad)
+    out.append(f'<div class="t" data-fit data-min="{round(fs * 0.5)}" style="left:{pad:.0f}px;top:{pad:.0f}px;width:{lw - 2 * pad:.0f}px;'
+               f'max-height:{t_max:.0f}px;font-size:{fs}px">{escape(ctx.get("title", ""))}</div>')
+    out.append(_logo("#000000", logo_w, pad, logo_top))
     gx, gy, gw, gh = (lw, 0, W - lw, H) if wide else (0, lh, W, H - lh)
     out.append(f'<div style="position:absolute;left:{gx:.0f}px;top:{gy:.0f}px;width:{gw:.0f}px;height:{gh:.0f}px;background:{bg};overflow:hidden">')
     pals = brandgfx.palettes()

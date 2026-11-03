@@ -44,7 +44,7 @@ TOOLS = [
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "badges": {"type": "array", "items": {"type": "object", "properties": {
                             "image": {"type": "string"}, "text": {"type": "string"}, "label": {"type": "string"}}}},
-                        "hide_logo": {"type": "boolean"},
+                        "show_logo": {"type": "boolean", "description": "логотип «дизайнерс» по умолчанию НЕ ставим; true — только если в задаче прямо попросили логотип"},
                         "items": {"type": "array", "items": {"type": "string"}},
                         "table": {"type": "object", "properties": {
                             "columns": {"type": "array", "items": {"type": "string"}},

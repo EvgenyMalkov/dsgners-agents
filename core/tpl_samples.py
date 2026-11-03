@@ -17,7 +17,7 @@ SAMPLES = {
     "story": {"title": "Новая рубрика по пятницам", "subtitle": "Разборы работ подписчиков", "date": "15.05 в 20:00",
               "palette": "lime", "motifs": ["cloud", "zigzag", "squiggle"]},
     "site-banner": {"title": "Пиши о дизайне — тебя прочитают", "rubric": "Авторам", "palette": "pink",
-                    "motifs": ["heart", "star8"], "hide_logo": True},
+                    "motifs": ["heart", "star8"]},
     "article-cover": {"title": "Как общаться с клиентами", "rubric": "Гайд", "author": "Имя Автора", "palette": "cyan",
                       "motifs": ["bubble", "squiggle"]},
     "article-steps": {"title": "5 ошибок в портфолио", "rubric": "Чек-лист", "palette": "orange", "motifs": ["heart", "zigzag"],
