@@ -28,7 +28,8 @@ OFFICE_PORT = int(os.getenv("OFFICE_PORT", "8080"))
 SEO_MONITOR = os.getenv("SEO_MONITOR", "1") == "1"
 SEO_SITE = os.getenv("SEO_SITE", "dsgners.ru").strip().lower().removeprefix("https://").strip("/")
 # какие адреса считать статьями/новостями/списками (регулярка по URL); пусто — все, кроме служебных
-SEO_CONTENT_PATTERN = os.getenv("SEO_CONTENT_PATTERN", "")
+# на dsgners статьи выглядят так: /<автор>/<номер>-<адрес>, например /na_produkte/12366-dizayn-marafon-a-ne-sprint
+SEO_CONTENT_PATTERN = os.getenv("SEO_CONTENT_PATTERN", "") or r"^https?://[^/]+/[^/]+/\d+-[^/]+$"
 # какие адреса не проверять вообще (профили, поиск, служебные)
 SEO_IGNORE_PATTERN = os.getenv("SEO_IGNORE_PATTERN", r"/(login|auth|signup|register|search|settings|cart|api)(/|$)|\?")
 SEO_CRAWL_RPS = float(os.getenv("SEO_CRAWL_RPS", "1.5"))          # запросов в секунду при обходе

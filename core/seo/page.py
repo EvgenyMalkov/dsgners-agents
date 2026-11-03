@@ -21,6 +21,7 @@ DESC_MIN, DESC_MAX = 70, 170
 THIN_WORDS = 250
 SITEMAP_TIMEOUT = 120   # секунд на один sitemap-файл (секции на тысячи адресов генерируются долго)
 SITEMAP_RETRY_PAUSE = 10
+RECHECK_PAUSE = 20      # пауза перед перепроверкой страницы, которая не открылась
 
 
 LABELS = {
@@ -134,6 +135,7 @@ class PageReport:
     internal_links: list = field(default_factory=list)
     external_links: int = 0
     issues: list = field(default_factory=list)   # [(level, code, text)]
+    retries: int = 0                              # сколько раз перепроверяли после сбоя
 
     @property
     def noindex(self) -> bool:
@@ -209,6 +211,9 @@ def analyze(f: Fetched, is_article: bool = False) -> PageReport:
         return rep
     if f.status >= 500:
         rep.add("critical", "5xx", f"Ошибка сервера HTTP {f.status}")
+        return rep
+    if f.status == 429:
+        rep.add("critical", "5xx", "Сайт ответил 429 «слишком много запросов» — бот проверял слишком часто")
         return rep
     if f.status >= 400:
         rep.add("critical", "4xx", f"Страница отдаёт HTTP {f.status}")
@@ -311,8 +316,25 @@ def analyze(f: Fetched, is_article: bool = False) -> PageReport:
     return rep
 
 
-async def check_url(url: str, session=None, is_article: bool = False) -> PageReport:
-    return analyze(await fetch(url, session), is_article)
+TRANSIENT = {"unreachable", "5xx"}
+
+
+def is_transient(rep: PageReport) -> bool:
+    """Ошибка, которая бывает разовой: тайм-аут, обрыв связи, 5xx, 429 (сайт просит притормозить)."""
+    return rep.status == 429 or any(c in TRANSIENT for _, c, _ in rep.issues)
+
+
+async def check_url(url: str, session=None, is_article: bool = False, tries: int = 3) -> PageReport:
+    """Проверка страницы. «Не открывается» и 5xx перепроверяем с паузой и большим тайм-аутом —
+    в отчёт попадает только то, что не открылось ни разу."""
+    rep = analyze(await fetch(url, session), is_article)
+    for i in range(1, tries):
+        if not is_transient(rep):
+            break
+        await asyncio.sleep(RECHECK_PAUSE * i)
+        rep = analyze(await fetch(url, session, timeout=60), is_article)
+        rep.retries = i
+    return rep
 
 
 # ---------- sitemap ----------

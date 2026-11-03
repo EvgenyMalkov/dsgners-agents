@@ -89,6 +89,11 @@ def ssl_days_left(host: str) -> int:
 async def hourly() -> str:
     async with _session() as s:
         home = await page.fetch(site_url("/"), s)
+        for i in range(2):     # разовый сбой — не повод будить владельца
+            if home.status == 200:
+                break
+            await asyncio.sleep(page.RECHECK_PAUSE * (i + 1))
+            home = await page.fetch(site_url("/"), s, timeout=60)
         rob = await page.fetch(site_url("/robots.txt"), s)
     up = home.status == 200
     await alert("down", not up,
@@ -297,11 +302,19 @@ async def crawl(urls: list[str]) -> list[page.PageReport]:
     async with _session() as s:
         async def one(u):
             async with sem:
-                rep = await page.check_url(u, s, is_article=is_content(u))
-                store.save_check(rep)
+                rep = await page.check_url(u, s, is_article=is_content(u), tries=1)
                 out.append(rep)
                 await asyncio.sleep(delay)
         await asyncio.gather(*(one(u) for u in urls))
+        # то, что не открылось, перепроверяем в конце по одной, медленно, с паузами
+        failed = [i for i, r in enumerate(out) if page.is_transient(r)]
+        if failed:
+            await asyncio.sleep(60)
+        for i in failed:
+            out[i] = await page.check_url(out[i].url, s, is_article=is_content(out[i].url), tries=3)
+            await asyncio.sleep(3)
+    for r in out:
+        store.save_check(r)
     return out
 
 
@@ -351,8 +364,12 @@ async def weekly() -> tuple[str, Path | None]:
             continue
         L.append(f"## {names[lvl]}")
         for code, lst in items:
-            L.append(f"- **{page.LABELS.get(code, code)}** — {len(lst)} стр. Примеры: "
-                     + ", ".join(u for u, _ in lst[:5]))
+            if code in page.TRANSIENT or code == "4xx":
+                L.append(f"- **{page.LABELS.get(code, code)}** — {len(lst)} стр. (перепроверено 3 раза с паузами):")
+                L += [f"  - {u} — {t}" for u, t in lst[:10]]
+            else:
+                L.append(f"- **{page.LABELS.get(code, code)}** — {len(lst)} стр. Примеры: "
+                         + ", ".join(u for u, _ in lst[:5]))
         L.append("")
     for title, name in (("Одинаковые title", "title"), ("Одинаковые description", "description")):
         d = _dupes(reports, name, 10)
