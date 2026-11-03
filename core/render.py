@@ -112,6 +112,12 @@ async def render(template: str, data: dict, out_png: Path) -> list[str]:
     for k in ("title", "subtitle", "rubric", "cta"):
         if isinstance(ctx.get(k), str):
             ctx[k] = typograf(ctx[k])
+    if isinstance(ctx.get("items"), list):
+        ctx["items"] = [typograf(str(i)) for i in ctx["items"] if str(i).strip()]
+    tb = ctx.get("table")
+    if isinstance(tb, dict):
+        ctx["table"] = {"columns": [typograf(str(c)) for c in tb.get("columns", [])][:4],
+                        "rows": [[typograf(str(v)) for v in r] for r in tb.get("rows", [])][:6]}
     ctx["image"] = _image_src(ctx.get("image"))
     html = _env.get_template(f"{template}.html").render(ds=design_system(), W=W, H=H, **ctx)
 

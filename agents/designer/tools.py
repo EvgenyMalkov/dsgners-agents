@@ -18,16 +18,21 @@ TOOLS = [
         "input_schema": {
             "type": "object",
             "properties": {
-                "template": {"type": "string", "enum": ["tg-post", "square", "story", "site-banner"]},
+                "template": {"type": "string", "enum": list(templates_index())},
                 "name": {"type": "string", "description": "короткое имя файла латиницей, напр. onboarding-tg"},
                 "data": {
                     "type": "object",
-                    "description": "Поля шаблона: title, rubric, subtitle, cta, theme, image",
+                    "description": "Поля шаблона: title, rubric, subtitle, cta, theme, image; "
+                                   "для article-steps — items, для article-compare — table",
                     "properties": {
                         "title": {"type": "string"}, "rubric": {"type": "string"},
                         "subtitle": {"type": "string"}, "cta": {"type": "string"},
                         "theme": {"type": "string", "enum": ["dark", "lime", "light", "blue"]},
                         "image": {"type": "string"},
+                        "items": {"type": "array", "items": {"type": "string"}},
+                        "table": {"type": "object", "properties": {
+                            "columns": {"type": "array", "items": {"type": "string"}},
+                            "rows": {"type": "array", "items": {"type": "array", "items": {"type": "string"}}}}},
                     },
                     "required": ["title"],
                 },

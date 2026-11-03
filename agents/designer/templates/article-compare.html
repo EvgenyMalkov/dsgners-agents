@@ -1,0 +1,28 @@
+{% extends "_base.html" %}
+{% set cols = (table or {}).get('columns') or [] %}
+{% set rows = (table or {}).get('rows') or [] %}
+{% block css %}
+.col{left:56px;top:52px;right:56px;bottom:52px;gap:24px}
+.badge{font-size:18px;padding:8px 16px}
+.title{font-size:42px;max-height:96px;padding-right:180px}
+.tbl{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:{% for c in cols %}{{ '1.15fr ' if loop.first else '1fr ' }}{% endfor %};
+  grid-auto-rows:1fr;gap:6px;overflow:hidden}
+.cell{display:flex;align-items:center;padding:8px 16px;border-radius:12px;overflow:hidden;min-height:0;
+  background:{{ 'rgba(255,255,255,.06)' if (theme or 'dark') in ('dark','blue') else 'rgba(0,0,0,.05)' }}}
+.cell p{font-size:22px;line-height:1.22;font-weight:500;max-height:100%;overflow:hidden}
+.hd{background:{{ t.badge_bg }};color:{{ t.badge_fg }}}
+.hd p{font-weight:800}
+.first p{font-weight:700}
+.logo{position:absolute;right:56px;top:52px;font-size:20px}
+{% endblock %}
+{% block body %}
+<div class="logo">{{ ds.logo }}</div>
+<div class="col" data-box>
+  {% if rubric %}<span class="badge">{{ rubric }}</span>{% endif %}
+  <h2 class="title" data-fit data-min="26">{{ title }}</h2>
+  <div class="tbl">
+    {% for c in cols %}<div class="cell hd"><p data-fit data-min="14">{{ c }}</p></div>{% endfor %}
+    {% for r in rows %}{% for v in r[:cols|length] %}<div class="cell {{ 'first' if loop.first }}"><p data-fit data-min="13">{{ v }}</p></div>{% endfor %}{% endfor %}
+  </div>
+</div>
+{% endblock %}

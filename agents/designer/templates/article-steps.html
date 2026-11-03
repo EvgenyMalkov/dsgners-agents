@@ -1,0 +1,31 @@
+{% extends "_base.html" %}
+{% set n = (items or [])|length %}
+{% set two = n > 3 %}
+{% block css %}
+.col{left:56px;top:52px;right:56px;bottom:52px;gap:26px}
+.head{display:flex;flex-direction:column;gap:14px}
+.badge{font-size:18px;padding:8px 16px}
+.title{font-size:44px;max-height:100px}
+.list{flex:1 1 auto;min-height:0;display:grid;grid-template-columns:{{ '1fr 1fr' if two else '1fr' }};
+  grid-auto-rows:1fr;gap:16px 28px;overflow:hidden}
+.it{display:flex;gap:18px;align-items:center;min-height:0;overflow:hidden;
+  background:{{ 'rgba(255,255,255,.06)' if (theme or 'dark') in ('dark','blue') else 'rgba(0,0,0,.05)' }};
+  border-radius:20px;padding:14px 22px}
+.num{flex:0 0 auto;width:52px;height:52px;border-radius:50%;background:{{ t.badge_bg }};color:{{ t.badge_fg }};
+  font-weight:800;font-size:{{ 24 if two else 28 }}px;display:flex;align-items:center;justify-content:center}
+.txt{font-size:{{ 26 if two else (38 if n <= 3 else 30) }}px;font-weight:600;line-height:1.25;max-height:100%;overflow:hidden}
+.logo{position:absolute;right:56px;top:52px;font-size:20px}
+{% endblock %}
+{% block body %}
+<div class="logo">{{ ds.logo }}</div>
+<div class="col" data-box>
+  <div class="head">
+    {% if rubric %}<span class="badge">{{ rubric }}</span>{% endif %}
+    <h2 class="title" data-fit data-min="28">{{ title }}</h2>
+  </div>
+  <div class="list">
+    {% for it in items or [] %}<div class="it"><span class="num">{{ loop.index }}</span>
+      <p class="txt" data-fit data-min="16">{{ it }}</p></div>{% endfor %}
+  </div>
+</div>
+{% endblock %}
