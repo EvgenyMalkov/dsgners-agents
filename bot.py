@@ -5,6 +5,7 @@
 (их же можно нажать в офисе — что раньше, то и считается).
 """
 import asyncio
+import time
 import logging
 import uuid
 
@@ -209,20 +210,30 @@ async def seo_apply_site(job: dict):
             await BOT.send_message(uid, "ℹ️ API сайта ещё не подключено — SEO-поля и письмо автору нужно внести вручную "
                                         "(они в файлах выше). Как подключить: docs/site-api.md.")
         return
+    from core.seo import store as seo_store
     res = []
     url = (fields or {}).get("url") or (letter or {}).get("url")
+    before = {}
     try:
         art = await site_api.get_article(url)
         aid = art["id"]
         if fields:
+            before = art.get("seo") or {}
+            if art.get("images"):
+                before = dict(before, images=art["images"])
+            seo_store.put(f"seo_before:{aid}", before)   # прежние значения — чтобы можно было вернуть
             await site_api.update_seo(aid, fields)
             res.append("✅ SEO-поля записаны на сайт")
         if letter:
+            last = seo_store.get(f"letter:{aid}", 0)
             if seo_monitor.is_own(url) or str(art.get("author", "")).lower() in config.SEO_OWN_AUTHORS:
                 res.append("письмо не отправлял: это статья редакции")
+            elif time.time() - last < 30 * 86400:
+                res.append("письмо не отправлял: этому автору по этой статье уже писали меньше 30 дней назад")
             else:
-                m = await site_api.message_author(aid, letter["subject"], letter["text"])
-                res.append(f"✉️ Письмо автору {art.get('author', '')} отправлено" + (f": {m['url']}" if m.get("url") else ""))
+                await site_api.message_author(aid, letter["subject"], letter["text"])
+                seo_store.put(f"letter:{aid}", time.time())
+                res.append(f"✉️ Письмо автору {art.get('author', '')} отправлено (почта + уведомление)")
     except Exception as e:
         res.append(f"⚠️ Не получилось: {e}")
     office.update_job(job["id"], meta=dict(meta, applied=res))
