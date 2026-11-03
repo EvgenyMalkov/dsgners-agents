@@ -23,7 +23,7 @@ API = "https://api.figma.com/v1"
 BRAND_FILE = "mOEJGc0jVc8yhLsuvEVi8M"   # «Коммуникационка дизайнерс» — гайдбук
 _cache: dict = {}                        # key -> (ts, nodes)
 CACHE_TTL = 600
-MAX_SIDE = 2400
+MAX_SIDE = 3000
 
 
 def files() -> dict[str, str]:
@@ -133,6 +133,8 @@ EXPORT = {
         "node_id": {"type": "string", "description": "id из figma_find, напр. 12:345"},
         "file": {"type": "string"},
         "name": {"type": "string", "description": "имя файла латиницей"},
+        "scale": {"type": "integer", "enum": [2, 3, 4], "description": "чёткость; мобильный экран (375) — 3, "
+                  "если автопроверка пишет «картинка мелкая» — 4. По умолчанию 2"},
     }, "required": ["node_id", "name"]},
 }
 
@@ -181,7 +183,8 @@ async def export(inp: dict, ctx: Ctx):
     nid = inp["node_id"].replace("-", ":")
     if ctx.progress:
         await ctx.progress(f"выгружаю из Figma {nid}")
-    data = await _get(f"/images/{key}", ids=nid, format="png", scale=2)
+    scale = inp.get("scale") if inp.get("scale") in (2, 3, 4) else 2
+    data = await _get(f"/images/{key}", ids=nid, format="png", scale=scale)
     url = (data.get("images") or {}).get(nid)
     if not url:
         return [{"type": "text", "text": f"Figma не отдала картинку для {nid} (узел пустой или скрыт)."}]
@@ -189,7 +192,12 @@ async def export(inp: dict, ctx: Ctx):
         async with s.get(url) as r:
             raw = await r.read()
     im = Image.open(io.BytesIO(raw)).convert("RGBA")
-    im.thumbnail((MAX_SIDE, MAX_SIDE))
+    # Длинный экран не ужимаем целиком (иначе 375×6000 превращался в мыло 150 px шириной):
+    # ширину ограничиваем, а по высоте берём верх — витрины всё равно показывают верх экрана.
+    if im.width > MAX_SIDE:
+        im = im.resize((MAX_SIDE, round(im.height * MAX_SIDE / im.width)), Image.LANCZOS)
+    if im.height > im.width * 2.4:
+        im = im.crop((0, 0, im.width, round(im.width * 2.4)))
     from core.common_tools import safe_name
     p = ctx.job_dir / f"figma-{safe_name(inp['name'], 'frame')}.png"
     bg = Image.new("RGB", im.size, "white")

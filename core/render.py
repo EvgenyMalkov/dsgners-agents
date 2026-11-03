@@ -72,8 +72,14 @@ async ({safe}) => {
   }
 
   // 3. Картинки
-  for (const img of document.images)
-    if (!img.complete || img.naturalWidth === 0) issues.push('Картинка не загрузилась: ' + img.getAttribute('src'));
+  for (const img of document.images) {
+    if (!img.complete || img.naturalWidth === 0) { issues.push('Картинка не загрузилась: ' + img.getAttribute('src')); continue; }
+    // мыло: исходник заметно меньше, чем место под него в 2x-рендере (с учётом object-fit: cover)
+    const r = img.getBoundingClientRect(); if (r.width < 40 || img.src.includes('/assets/')) continue;
+    const need = Math.max(r.width / img.naturalWidth, r.height / img.naturalHeight) * devicePixelRatio;
+    if (need > 1.6) issues.push(`Картинка мелкая и будет мыльной (${img.naturalWidth}×${img.naturalHeight}, растянута в ${need.toFixed(1)} раза): `
+      + 'выгрузи крупнее (figma_export со scale 3–4 или другой исходник) либо уменьши её на макете');
+  }
   return issues;
 }
 """
