@@ -4,11 +4,16 @@ import json
 from pathlib import Path
 
 from core import common_tools as ct
+from core import figma
 from core import config
 from core.agent import Ctx
 
 TG_CAPTION_LIMIT = 1024
 TG_TEXT_LIMIT = 4096
+
+def system_extra() -> str:
+    return figma.system_note()
+
 
 TOOLS = [
     {
@@ -26,7 +31,7 @@ TOOLS = [
     ct.READ_PAGE,
     ct.SAVE_DOCUMENT,
     ct.FINISH,
-]
+] + figma.tools()
 
 
 def _resolve_image(value: str) -> str | None:
@@ -66,6 +71,8 @@ async def handle(name: str, inp: dict, ctx: Ctx):
         if ctx.progress:
             await ctx.progress(f"пост №{len(posts)} → {inp.get('channel') or 'черновик'}")
         return [{"type": "text", "text": f"Пост №{len(posts)} добавлен ({len(text)} симв.).{warn}"}]
+    if name in figma.HANDLERS:
+        return await figma.HANDLERS[name](inp, ctx)
     if name in ct.COMMON_HANDLERS:
         return await ct.COMMON_HANDLERS[name](inp, ctx)
     return [{"type": "text", "text": f"Нет инструмента {name}"}]

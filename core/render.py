@@ -216,7 +216,7 @@ async def render_html(html: str, out_png: Path, width: int = 1440, max_height: i
     first = out_png.with_name(out_png.stem + "-screen.jpg")
     errors: list[str] = []
     async with async_playwright() as p:
-        browser = await p.chromium.launch()
+        browser = await p.chromium.launch(args=["--allow-file-access-from-files"])
         try:
             page = await browser.new_page(viewport={"width": width, "height": 900 if width > 600 else 844},
                                           device_scale_factor=1)

@@ -3,13 +3,15 @@ import json
 import re
 
 from core.agent import Ctx, image_block
+from core import figma
 from core.render import render, templates_index
 
 
 def system_extra() -> str:
     from core import config
     idx = {k: ({"size": v["size"], "use": v["use"]} if not k.startswith("_") else v) for k, v in templates_index().items()}
-    return "# Шаблоны\n```json\n" + json.dumps(idx, ensure_ascii=False, indent=1) + "\n```"
+    return ("# Шаблоны\n```json\n" + json.dumps(idx, ensure_ascii=False, indent=1) + "\n```\n\n"
+            + figma.system_note())
 
 
 TOOLS = [
@@ -67,7 +69,12 @@ def _safe_name(name: str) -> str:
     return re.sub(r"[^a-zA-Z0-9_-]+", "-", name).strip("-")[:40] or "visual"
 
 
+TOOLS += figma.tools()
+
+
 async def handle(name: str, inp: dict, ctx: Ctx):
+    if name in figma.HANDLERS:
+        return await figma.HANDLERS[name](inp, ctx)
     if name == "render_visual":
         fname = _safe_name(inp["name"])
         png = ctx.job_dir / f"{fname}.png"
