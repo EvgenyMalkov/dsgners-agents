@@ -51,6 +51,10 @@ YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN", "")
 METRIKA_COUNTER_ID = os.getenv("METRIKA_COUNTER_ID", "")
 INDEXNOW_KEY = os.getenv("INDEXNOW_KEY", "")
 
+# API сайта dsgners (docs/site-api.md): запись SEO-полей и письма авторам после «Ок» владельца
+SITE_API_URL = os.getenv("SITE_API_URL", "")      # напр. https://dsgners.ru/api/agents
+SITE_API_TOKEN = os.getenv("SITE_API_TOKEN", "")
+
 TEAM = ROOT / "team"
 AGENTS = ROOT / "agents"
 DATA = ROOT / "data"

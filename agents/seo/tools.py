@@ -64,6 +64,30 @@ TOOLS = [
         }, "required": ["title", "main_query", "plan"]},
     },
     {
+        "name": "set_seo_fields",
+        "description": "Итоговые SEO-поля статьи в машинном виде — после «Ок» владельца система сама запишет их на сайт "
+                       "(текст статьи не меняется). Вызывай в дополнение к документу «seo», когда оформляешь существующую статью.",
+        "input_schema": {"type": "object", "properties": {
+            "url": {"type": "string"},
+            "seo_title": {"type": "string"}, "meta_description": {"type": "string"},
+            "og_title": {"type": "string"}, "og_description": {"type": "string"},
+            "jsonld": {"type": "string", "description": "JSON-LD целиком (без тега script), проверенный validate_jsonld"},
+            "images": {"type": "array", "items": {"type": "object", "properties": {
+                "src": {"type": "string"}, "alt": {"type": "string"}}, "required": ["src", "alt"]},
+                "description": "alt для картинок: адрес картинки как на странице → alt"},
+        }, "required": ["url"]},
+    },
+    {
+        "name": "set_author_letter",
+        "description": "Письмо автору статьи в машинном виде — после «Ок» владельца система отправит его от редакции: "
+                       "на почту автора и уведомлением на сайте со ссылкой на письмо. Только для статей авторов.",
+        "input_schema": {"type": "object", "properties": {
+            "url": {"type": "string"},
+            "subject": {"type": "string", "description": "тема письма, до 80 знаков, по делу: «Как вернуть читателей статье „…“»"},
+            "text": {"type": "string", "description": "текст письма, до 1200 знаков"},
+        }, "required": ["url", "subject", "text"]},
+    },
+    {
         "name": "keyword_data",
         "description": "Данные о спросе по теме: фразы из выгрузок Вордстата с частотами, запросы из Вебмастера "
                        "(наши позиции, показы, клики) и наши страницы по теме.",
@@ -282,7 +306,30 @@ async def propose_topics(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": f"Тем: {len(topics)}. Теперь save_document «content-plan» с выводами и finish."}]
 
 
-HANDLERS = {"submit_plan": submit_plan, "keyword_data": keyword_data, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
+async def set_seo_fields(inp: dict, ctx: Ctx):
+    f = {k: v for k, v in inp.items() if v}
+    if f.get("jsonld"):
+        chk = await validate_jsonld({"jsonld": f["jsonld"]}, ctx)
+        if not chk[0]["text"].startswith("Разметка в порядке"):
+            return [{"type": "text", "text": "Не сохранил: " + chk[0]["text"]}]
+    for k, lim in (("seo_title", 75), ("meta_description", 180)):
+        if len(f.get(k, "")) > lim:
+            return [{"type": "text", "text": f"{k} длиннее {lim} знаков — сократи."}]
+    ctx.meta["seo_fields"] = f
+    return [{"type": "text", "text": "SEO-поля сохранены — после «Ок» уйдут на сайт."}]
+
+
+async def set_author_letter(inp: dict, ctx: Ctx):
+    from core.seo import monitor
+    if monitor.is_own(inp["url"]):
+        return [{"type": "text", "text": "Это статья редакции — письмо автору не нужно."}]
+    if len(inp["text"]) > 1500:
+        return [{"type": "text", "text": f"Письмо {len(inp['text'])} знаков — сократи до 1200."}]
+    ctx.meta["letter"] = {"url": inp["url"], "subject": inp["subject"].strip()[:100], "text": inp["text"].strip()}
+    return [{"type": "text", "text": "Письмо сохранено — после «Ок» уйдёт автору."}]
+
+
+HANDLERS = {"set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
             "validate_jsonld": validate_jsonld}
 
 

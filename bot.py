@@ -196,11 +196,47 @@ def seo_start_job(agent: str, task: str, source: str, full_task: str) -> str:
     return runner.start_job(agent, task, source=source, full_task=full_task)
 
 
+async def seo_apply_site(job: dict):
+    """После «Ок»: SEO-поля → на сайт, письмо → автору (почта + уведомление). Нужен API сайта (docs/site-api.md)."""
+    from core import site_api
+    from core.office import office
+    meta = job.get("meta") or {}
+    fields, letter = meta.get("seo_fields"), meta.get("letter")
+    if not (fields or letter):
+        return
+    if not site_api.enabled():
+        for uid in config.OWNER_IDS:
+            await BOT.send_message(uid, "ℹ️ API сайта ещё не подключено — SEO-поля и письмо автору нужно внести вручную "
+                                        "(они в файлах выше). Как подключить: docs/site-api.md.")
+        return
+    res = []
+    url = (fields or {}).get("url") or (letter or {}).get("url")
+    try:
+        art = await site_api.get_article(url)
+        aid = art["id"]
+        if fields:
+            await site_api.update_seo(aid, fields)
+            res.append("✅ SEO-поля записаны на сайт")
+        if letter:
+            if seo_monitor.is_own(url) or str(art.get("author", "")).lower() in config.SEO_OWN_AUTHORS:
+                res.append("письмо не отправлял: это статья редакции")
+            else:
+                m = await site_api.message_author(aid, letter["subject"], letter["text"])
+                res.append(f"✉️ Письмо автору {art.get('author', '')} отправлено" + (f": {m['url']}" if m.get("url") else ""))
+    except Exception as e:
+        res.append(f"⚠️ Не получилось: {e}")
+    office.update_job(job["id"], meta=dict(meta, applied=res))
+    office.emit("seo", "done" if not any(r.startswith("⚠️") for r in res) else "error", "; ".join(res)[:200], job["id"])
+    for uid in config.OWNER_IDS:
+        await BOT.send_message(uid, f"{url}\n" + "\n".join(res))
+
+
 async def seo_after_approve(job: dict):
     """«Ок» на план статьи → SEO-шник пишет текст; «Ок» на правила из разбора → правила вступают в силу."""
     meta = job.get("meta") or {}
     if job["agent"] != "seo":
         return
+    await seo_apply_site(job)
     if meta.get("stage") == "plan" and job["task"].startswith("Автору"):
         meta = dict(meta, stage=None)   # статью автора не переписываем никогда — только SEO-поля и письмо
     if meta.get("stage") == "plan":
@@ -340,7 +376,11 @@ async def send_review(job: dict):
     docs = [f for f in files if f.suffix.lower() not in IMG and f.exists() and f.name != "posts.md"][:5]
     posts = (job.get("meta") or {}).get("posts") or []
     title = f"{ICON.get(job['agent'], '🤖')} {AGENTS[job['agent']]['title']}"
+    from core import site_api
+    meta = job.get("meta") or {}
     ok_text = "✅ Ок и опубликовать" if any(p.get("channel") for p in posts) else "✅ Ок"
+    if job["agent"] == "seo" and site_api.enabled() and (meta.get("seo_fields") or meta.get("letter")):
+        ok_text = "✅ Ок и отправить на сайт" + (" и автору" if meta.get("letter") else "")
     kb = InlineKeyboardMarkup(inline_keyboard=[[
         InlineKeyboardButton(text=ok_text, callback_data=f"ok:{job['id']}"),
         InlineKeyboardButton(text="🔁 Переделать", callback_data=f"redo:{job['id']}"),
@@ -352,6 +392,14 @@ async def send_review(job: dict):
             await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in imgs])
         for d in docs:
             await BOT.send_document(uid, FSInputFile(d))
+        if meta.get("letter"):
+            L = meta["letter"]
+            await BOT.send_message(uid, f"✉️ Письмо автору (уйдёт после «Ок»)\nТема: {L['subject']}\n\n{L['text'][:3500]}")
+        if meta.get("seo_fields"):
+            f = meta["seo_fields"]
+            await BOT.send_message(uid, "🔧 SEO-поля для сайта:\n" + "\n".join(
+                f"{k}: {f[k]}" for k in ("seo_title", "meta_description", "og_title") if f.get(k))
+                + (f"\nalt картинок: {len(f.get('images') or [])}; разметка: {'да' if f.get('jsonld') else 'нет'}"))
         for i, p in enumerate(posts, 1):
             await BOT.send_message(uid, f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n{p['text'][:3900]}")
         await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}", reply_markup=kb)
