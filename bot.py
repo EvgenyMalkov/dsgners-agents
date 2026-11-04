@@ -529,6 +529,19 @@ async def ws_hubs(m: Message):
     asyncio.create_task(go())
 
 
+@dp.message(Command("topics_traffic"))
+async def topics_traffic(m: Message):
+    """Посещаемость страниц тем (/ui, /branding…), фильтра и «Образования» по Метрике."""
+    if not is_owner(m):
+        return
+    from core.seo import demand_map
+    await m.answer("Смотрю Метрику по темам…")
+    try:
+        await m.answer((await demand_map.topics_traffic())[:3900])
+    except Exception as e:
+        await m.answer(f"Метрика: {e}"[:1000])
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -631,6 +644,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("⏸ Остановить SEO-агента", "c:/seo_stop")],
                 [_b("📈 Вордстат: фраза", "i:ws"), _b("🧲 Собрать семантику", "i:ws_parse")],
                 [_b("🗺 Карта спроса по разделам", "c:/ws_map"), _b("🧭 Хабы по темам сайта", "c:/ws_hubs")],
+                [_b("📊 Посещаемость тем", "c:/topics_traffic")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -663,7 +677,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic"}
 
 
 async def run_cmd(m: Message, user, text: str):

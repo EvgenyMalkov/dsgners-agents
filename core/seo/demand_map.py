@@ -191,3 +191,50 @@ async def build_hubs() -> str:
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text("\n".join(md), "utf-8")
     return str(out)
+
+
+# ---------------- посещаемость тем (Метрика) ----------------
+TOPIC_PATHS = ["/ui", "/ux", "/graphic-design", "/3d", "/career", "/typography", "/motion", "/product-design",
+               "/branding", "/ai", "/mnenie", "/kreativ", "/bez-avtopilota", "/filter", "/education"]
+
+
+async def _metrika(metrics: str, dims: str, d1: dt.date, d2: dt.date, filters: str = "") -> dict[str, float]:
+    from core.seo import apis
+    params = {"ids": config.METRIKA_COUNTER_ID, "metrics": metrics, "dimensions": dims,
+              "date1": d1.isoformat(), "date2": d2.isoformat(), "limit": "100000", "accuracy": "full"}
+    if filters:
+        params["filters"] = filters
+    data = await apis._get(apis.MK, params)
+    out = {}
+    for row in data.get("data", []):
+        path = ((row.get("dimensions") or [{}])[0].get("name") or "").split("?")[0].rstrip("/") or "/"
+        out[path] = out.get(path, 0) + float((row.get("metrics") or [0])[0])
+    return out
+
+
+async def topics_traffic() -> str:
+    """Просмотры страниц тем, входы на них (все источники и поиск) — 28 дней к предыдущим 28."""
+    from core.seo import apis
+    if not (apis.has_yandex() and config.METRIKA_COUNTER_ID):
+        return "Метрика не подключена: нужны YANDEX_OAUTH_TOKEN и METRIKA_COUNTER_ID."
+    end = dt.date.today() - dt.timedelta(days=1)
+    cur = (end - dt.timedelta(days=27), end)
+    prev = (end - dt.timedelta(days=55), end - dt.timedelta(days=28))
+    org = "ym:s:lastTrafficSource=='organic'"
+    pv = await _metrika("ym:pv:pageviews", "ym:pv:URLPath", *cur)
+    pv0 = await _metrika("ym:pv:pageviews", "ym:pv:URLPath", *prev)
+    ent = await _metrika("ym:s:visits", "ym:s:startURLPath", *cur)
+    so = await _metrika("ym:s:visits", "ym:s:startURLPath", *cur, filters=org)
+    so0 = await _metrika("ym:s:visits", "ym:s:startURLPath", *prev, filters=org)
+    site_pv = sum(pv.values()) or 1
+
+    def ch(a, b):
+        return f"{(a / b - 1) * 100:+.0f}%" if b else "—"
+    L = [f"📊 Темы сайта, {cur[0]:%d.%m}–{cur[1]:%d.%m} (к прошлым 4 неделям)", "",
+         "просмотры · входы на страницу · из них из поиска"]
+    for p in sorted(TOPIC_PATHS, key=lambda x: -pv.get(x, 0)):
+        a, b = pv.get(p, 0), pv0.get(p, 0)
+        L.append(f"{p}: {int(a)} ({ch(a, b)}) · {int(ent.get(p, 0))} · {int(so.get(p, 0))} ({ch(so.get(p, 0), so0.get(p, 0))})")
+    tot = sum(pv.get(p, 0) for p in TOPIC_PATHS if p not in ("/filter", "/education"))
+    L += ["", f"Все 13 тем вместе — {tot / site_pv * 100:.1f}% просмотров сайта ({int(tot)} из {int(site_pv)})."]
+    return "\n".join(L)
