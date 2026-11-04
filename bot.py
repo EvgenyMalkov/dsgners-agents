@@ -487,6 +487,28 @@ async def ws_parse(m: Message):
                    + "\n".join(f"{x['count']:>8}  {x['phrase']}" for x in r["top"][:20]))
 
 
+@dp.message(Command("ws_map"))
+async def ws_map(m: Message):
+    """Карта спроса по разделам SEO-стратегии: курсы, студии по городам, глоссарий, инструменты, хабы, вакансии."""
+    if not is_owner(m):
+        return
+    from core.seo import demand_map, wordstat
+    if not wordstat.enabled():
+        await m.answer("Вордстат API не подключён: WORDSTAT_API_KEY и YC_FOLDER_ID в .env.")
+        return
+    n = sum(len(v) for v in demand_map.SECTIONS.values())
+    await m.answer(f"Собираю карту спроса: {len(demand_map.SECTIONS)} разделов, {n} фраз. Это 3–7 минут — пришлю файлы.")
+
+    async def go():
+        try:
+            md, csvp = await demand_map.build()
+            await m.answer_document(FSInputFile(md), caption="🗺 Карта спроса (markdown) — можно переслать Claude")
+            await m.answer_document(FSInputFile(csvp), caption="То же таблицей (CSV для Excel/Google Таблиц)")
+        except Exception as e:
+            await m.answer(f"Карта спроса не собралась: {e}"[:1000])
+    asyncio.create_task(go())
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -588,6 +610,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                  _b(f"✉️ Советы авторам: {_onoff(author_tips.enabled())}", "t:tips")],
                 [_b("⏸ Остановить SEO-агента", "c:/seo_stop")],
                 [_b("📈 Вордстат: фраза", "i:ws"), _b("🧲 Собрать семантику", "i:ws_parse")],
+                [_b("🗺 Карта спроса по разделам", "c:/ws_map")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -620,7 +643,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map"}
 
 
 async def run_cmd(m: Message, user, text: str):
