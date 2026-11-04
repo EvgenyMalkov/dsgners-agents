@@ -586,6 +586,30 @@ async def hub_classify(m: Message):
     asyncio.create_task(go())
 
 
+CLUSTER_ALIASES = {"branding": "Брендинг", "брендинг": "Брендинг", "ui": "UI", "ux": "UX", "typography": "Типографика",
+                   "типографика": "Типографика", "graphic": "Графический дизайн", "career": "Карьера", "карьера": "Карьера",
+                   "ai": "Нейросети", "нейросети": "Нейросети", "motion": "Моушн", "3d": "3D", "product": "Продуктовый дизайн"}
+
+
+@dp.message(Command("cluster"))
+async def cluster_cmd(m: Message):
+    """Данные для каркаса кластера: подтемы × намерения запросов × наши статьи × Метрика/Вебмастер."""
+    if not is_owner(m):
+        return
+    from core.seo import cluster
+    arg = (m.text or "").partition(" ")[2].strip().lower() or "branding"
+    direction = CLUSTER_ALIASES.get(arg, arg.capitalize())
+    await m.answer(f"Собираю кластер «{direction}»: Вордстат по каждой подтеме, наши статьи, Метрика и Вебмастер. 2–5 минут.")
+
+    async def go():
+        try:
+            md = await cluster.build(direction)
+            await m.answer_document(FSInputFile(md), caption=f"🧩 Кластер «{direction}» — перешли Claude")
+        except Exception as e:
+            await m.answer(f"Не собралось: {e}"[:1000])
+    asyncio.create_task(go())
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -690,6 +714,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("🗺 Карта спроса по разделам", "c:/ws_map"), _b("🧭 Хабы по темам сайта", "c:/ws_hubs")],
                 [_b("📊 Посещаемость тем", "c:/topics_traffic"), _b("🗂 База под хабы", "c:/hub_inventory")],
                 [_b("🤖 Разложить базу моделью", "c:/hub_classify"), _b("Ход раскладки", "c:/hub_classify status")],
+                [_b("🧩 Кластер «Брендинг»", "c:/cluster branding")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -722,7 +747,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd"}
 
 
 async def run_cmd(m: Message, user, text: str):
