@@ -261,6 +261,10 @@ async def validate_jsonld(inp: dict, ctx: Ctx):
             if not re.match(r"\d{4}-\d{2}-\d{2}", str(it.get("datePublished", ""))):
                 probs.append("datePublished не в формате ISO 8601 (2026-11-02 или 2026-11-02T10:00:00+03:00)")
     types = [i.get("@type") for i in items if isinstance(i, dict)]
+    own = {"Article", "NewsArticle", "BlogPosting", "WebPage", "BreadcrumbList", "Organization", "Person"}
+    clash = [t for t in types if (t[0] if isinstance(t, list) else t) in own]
+    if clash:   # сайт сам выводит эти типы и отклонит их от агента (422)
+        probs.append(f"типы {clash} сайт выводит сам — оставь только дополнительные (FAQPage, HowTo, ItemList, VideoObject)")
     if probs:
         return [{"type": "text", "text": "Проблемы: " + "; ".join(probs)}]
     return [{"type": "text", "text": f"Разметка в порядке. Типы: {types}"}]
