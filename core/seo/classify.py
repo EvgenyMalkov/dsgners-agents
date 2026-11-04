@@ -100,6 +100,29 @@ TOOL = {
 }
 
 
+def _items(out) -> list[dict]:
+    """Модель иногда отдаёт items строкой JSON или элементы строками — разбираем всё, что похоже на ответ."""
+    items = out.get("items", []) if isinstance(out, dict) else out
+    if isinstance(items, str):
+        try:
+            items = json.loads(items)
+        except ValueError:
+            return []
+    res = []
+    for it in items if isinstance(items, list) else []:
+        if isinstance(it, str):
+            try:
+                it = json.loads(it)
+            except ValueError:
+                continue
+        if isinstance(it, dict):
+            labs = it.get("labels", [])
+            if isinstance(labs, str):
+                labs = [x.strip() for x in labs.split(",") if x.strip()]
+            res.append({"i": it.get("i"), "labels": labs if isinstance(labs, list) else []})
+    return res
+
+
 async def _classify(say=None):
     d = _db()
     done = {r[0] for r in d.execute("SELECT url FROM post_topics")}
@@ -135,7 +158,7 @@ async def _classify(say=None):
             continue
         out = next((b.input for b in resp.content if b.type == "tool_use"), {}) or {}
         ok = set(allowed)
-        for it in out.get("items", []):
+        for it in _items(out):
             i = it.get("i")
             if not isinstance(i, int) or not 0 <= i < len(chunk):
                 continue
