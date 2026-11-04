@@ -631,6 +631,59 @@ async def cluster_pick(m: Message):
     asyncio.create_task(go())
 
 
+HUBS_KB = InlineKeyboardMarkup(inline_keyboard=[[
+    InlineKeyboardButton(text="✅ Ок, публикуй", callback_data="hubs_ok"),
+    InlineKeyboardButton(text="✖️ Не применять", callback_data="hubs_no")]])
+
+
+async def hubs_ask(text: str, path):
+    if not BOT:
+        return
+    for uid in config.OWNER_IDS:
+        await BOT.send_document(uid, FSInputFile(path), caption="🗂 Хабы: черновик подборок")
+        await BOT.send_message(uid, text[:3900], reply_markup=HUBS_KB)
+
+
+@dp.message(Command("hubs"))
+async def hubs_cmd(m: Message):
+    """Хабы /education: что опубликовано, черновик, версии."""
+    if not is_owner(m):
+        return
+    from core.seo import hubs
+    await m.answer(hubs.status_text())
+
+
+@dp.message(Command("hubs_build"))
+async def hubs_build(m: Message):
+    """Собрать подборки для всех хабов сейчас → черновик на «Ок»."""
+    if not is_owner(m):
+        return
+    await m.answer("Собираю подборки для всех подстраниц хабов — 5–15 минут. Пришлю черновик на «Ок».")
+    asyncio.create_task(seo_scheduler.run("hubs_weekly"))
+
+
+@dp.message(Command("hubs_rollback"))
+async def hubs_rollback(m: Message):
+    if not is_owner(m):
+        return
+    from core.seo import hubs
+    arg = (m.text or "").partition(" ")[2].strip()
+    if not arg.isdigit():
+        await m.answer("Пример: /hubs_rollback 12\n" + hubs.status_text())
+        return
+    await m.answer(hubs.rollback(int(arg)))
+
+
+@dp.callback_query(F.data.in_({"hubs_ok", "hubs_no"}))
+async def hubs_answer(c: CallbackQuery):
+    if not is_owner(c):
+        return
+    from core.seo import hubs
+    await c.message.edit_reply_markup(reply_markup=None)
+    await c.message.answer(await hubs.approve() if c.data == "hubs_ok" else hubs.reject())
+    await c.answer()
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -736,6 +789,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("📊 Посещаемость тем", "c:/topics_traffic"), _b("🗂 База под хабы", "c:/hub_inventory")],
                 [_b("🤖 Разложить базу моделью", "c:/hub_classify"), _b("Ход раскладки", "c:/hub_classify status")],
                 [_b("🧩 Кластер «Брендинг»", "c:/cluster branding"), _b("📚 Подборки «Логотип»", "c:/cluster_pick logo")],
+                [_b("🗂 Хабы: статус", "c:/hubs"), _b("🔄 Хабы: собрать", "c:/hubs_build")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -768,7 +822,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick", "hubs": "hubs_cmd", "hubs_build": "hubs_build"}
 
 
 async def run_cmd(m: Message, user, text: str):
@@ -1150,6 +1204,9 @@ async def main():
     await start_web()
     logging.info("ИИ-офис слушает порт %s", config.OFFICE_PORT)
     seo_monitor.setup(seo_notify, seo_start_job)
+    from core.seo import hubs as seo_hubs
+    seo_hubs.setup(hubs_ask)
+    await seo_hubs.start_server()
     asyncio.create_task(seo_scheduler.loop())
     if not config.TELEGRAM_BOT_TOKEN:
         logging.warning("Нет TELEGRAM_BOT_TOKEN — работает только офис")

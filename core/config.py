@@ -66,6 +66,12 @@ SEO_BULK_MODEL = os.getenv("SEO_BULK_MODEL", "")
 SEO_CLASSIFY_MODEL = os.getenv("SEO_CLASSIFY_MODEL", "claude-haiku-5-5")
 SEO_BULK_PER_HOUR = int(os.getenv("SEO_BULK_PER_HOUR", "40"))
 SEO_TZ = os.getenv("SEO_TZ", "Europe/Moscow")
+# хабы /education: агент собирает hubs.json, сайт забирает его сам (ТЗ — «ТЗ: автообновление хабов»)
+HUBS_ENABLED = os.getenv("HUBS_ENABLED", "1") == "1"
+HUBS_AUTO_APPLY = os.getenv("HUBS_AUTO_APPLY", "0") == "1"   # 0 — недельные замены после «Ок»
+HUBS_TOKEN = os.getenv("HUBS_TOKEN", "")                      # Bearer-токен для сайта; пусто — файл не отдаётся
+HUBS_HOST = os.getenv("HUBS_HOST", "0.0.0.0")
+HUBS_PORT = int(os.getenv("HUBS_PORT", "8787"))
 YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN", "")
 METRIKA_COUNTER_ID = os.getenv("METRIKA_COUNTER_ID", "")
 INDEXNOW_KEY = os.getenv("INDEXNOW_KEY", "")

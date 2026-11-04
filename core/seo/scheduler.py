@@ -38,6 +38,16 @@ def due(name: str, now: dt.datetime | None = None) -> bool:
         return time.time() - last >= 1800
     if name == "daily":
         return (now.hour, now.minute) >= (8, 30) and (not last or _local(last).date() < now.date())
+    if name.startswith("hubs_") and not config.HUBS_ENABLED:
+        return False
+    if name == "hubs_quick":
+        return time.time() - last >= 1800
+    if name == "hubs_daily":
+        return now.hour >= 7 and (not last or _local(last).date() < now.date())
+    if name == "hubs_weekly":
+        return now.weekday() == 0 and now.hour >= 10 and (not last or _local(last).date() < now.date())
+    if name == "hubs_monthly":
+        return now.day == 1 and now.hour >= 11 and (not last or _local(last).strftime("%Y-%m") < now.strftime("%Y-%m"))
     if name == "bulk":
         from core.seo import bulk
         return bulk.state().get("phase") == "running" and time.time() - last >= 3600
@@ -62,6 +72,10 @@ JOBS = {
     "monthly": monitor.monthly,
     "content_plan": monitor.content_plan,
     "bulk": lambda: __import__("core.seo.bulk", fromlist=["tick"]).tick(monitor.say),
+    "hubs_quick": lambda: __import__("core.seo.hubs", fromlist=["quick"]).quick(),
+    "hubs_daily": lambda: __import__("core.seo.hubs", fromlist=["daily"]).daily(),
+    "hubs_weekly": lambda: __import__("core.seo.hubs", fromlist=["weekly"]).weekly(monitor.say),
+    "hubs_monthly": lambda: __import__("core.seo.hubs", fromlist=["monthly"]).monthly(monitor.say),
 }
 
 
@@ -92,12 +106,13 @@ async def loop():
         return
     await asyncio.sleep(20)  # дать боту подняться
     # robots.txt нужен new_pages, чтобы найти sitemap — поэтому часовая проверка первой
-    order = ["hourly", "new_pages", "daily", "weekly", "monthly", "content_plan", "bulk"]
+    order = ["hourly", "new_pages", "daily", "weekly", "monthly", "content_plan", "bulk",
+             "hubs_quick", "hubs_daily", "hubs_weekly", "hubs_monthly"]
     while True:
         for name in order:
             try:
                 if name not in _running and due(name):
-                    if name in ("weekly", "monthly", "bulk"):
+                    if name in ("weekly", "monthly", "bulk", "hubs_daily", "hubs_weekly", "hubs_monthly"):
                         asyncio.create_task(run(name))   # долгие — в фоне
                     else:
                         await run(name)
@@ -143,6 +158,15 @@ def schedule_info() -> dict:
          "ai": True, "on": auto, "switch": "/seo_auto on|off", "last": last("content_plan")},
         {"when": "1-е число 10:00", "what": "Разбор результатов за месяц и новые правила для агента",
          "out": "отчёт + правила на «Ок»", "ai": True, "on": auto, "switch": "/seo_auto on|off", "last": last("monthly")},
+        {"when": "каждые 30 минут", "what": "Хабы /education: новые посты в ленты «Свежее», удалённые статьи — из блоков",
+         "out": "hubs.json сам, без «Ок»", "ai": True, "on": config.HUBS_ENABLED, "last": last("hubs_quick")},
+        {"when": "ежедневно 07:00", "what": "Хабы на сайте отвечают и показывают свежую версию, статьи из блоков живы",
+         "out": "алерт только при проблеме", "ai": False, "on": config.HUBS_ENABLED, "last": last("hubs_daily")},
+        {"when": "понедельник 10:00", "what": "Хабы: новые подборки во всех блоках + трафик хабов за неделю",
+         "out": "черновик тебе на «Ок»" if not config.HUBS_AUTO_APPLY else "публикуется сам, тебе отчёт", "ai": True,
+         "on": config.HUBS_ENABLED, "switch": "/hubs_build", "last": last("hubs_weekly")},
+        {"when": "1-е число 11:00", "what": "Хабы: пересмотр структуры — новые блоки и подстраницы по спросу",
+         "out": "предложения на «Ок»", "ai": False, "on": config.HUBS_ENABLED, "last": last("hubs_monthly")},
         {"when": "каждый час, пока идёт", "what": "Массовое оформление старых статей (/seo_bulk)",
          "out": "раз в день отчёт о ходе", "ai": True, "on": bulk.state().get("phase") == "running",
          "switch": "/seo_bulk", "last": last("bulk")},

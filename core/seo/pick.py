@@ -210,11 +210,13 @@ async def build(key: str) -> str:
           "Внутри блока — по силе совпадения (★) и потенциалу: визиты из поиска за 28 дней, просмотры на сайте за 90 дней, "
           "спрос на бренд из статьи в Вордстате («ребрендинг [бренд]»), свежесть (до 6 месяцев — 🆕). На страницу идут первые 3–9; "
           "блок, где меньше 3 статей с ★★ и выше, не показываем.", ""]
-    result = {}
+    result, ranked = {}, {}
     for j, (h, _) in enumerate(blocks):
         rows = sorted(picked[j], key=lambda r: -r["rank"])
         strong = [r for r in rows if r["score"] >= 2]
         result[h] = [r["url"] for r in strong[:9]]
+        ranked[h] = [{k: r[k] for k in ("url", "title", "score", "visits", "views", "demand", "fresh", "rank", "brand")}
+                     for r in strong[:30]]
         md += [f"## {h}", "", f"Подходит: {len(rows)}, из них уверенно (★★ и выше): {len(strong)}"
                + ("" if len(strong) >= 3 else " — мало, блок пока не показываем"), ""]
         for n, r in enumerate(rows[:12], 1):
@@ -226,7 +228,7 @@ async def build(key: str) -> str:
         md.append("")
     md += ["## Кто делает (авторы и студии по числу статей в подтеме)", ""]
     md += [f"- {a} — {c}" for a, c in sorted(authors.items(), key=lambda kv: -kv[1])[:10]]
-    store.put(f"pick:{key}", {"date": today.isoformat(), "blocks": result})
+    store.put(f"pick:{key}", {"date": today.isoformat(), "blocks": result, "ranked": ranked})
     out_path = config.OUTBOX / "seo-plan" / f"pick-{key}-{today:%Y-%m-%d}.md"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text("\n".join(md), "utf-8")
