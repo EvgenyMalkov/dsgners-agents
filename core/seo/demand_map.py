@@ -105,3 +105,89 @@ async def build(progress=None) -> tuple[str, str]:
             w.writerow([r["section"], r["phrase"], r.get("total", ""), r.get("yoy", ""), r.get("q", ""),
                         r.get("peak", ""), r.get("subs", ""), r.get("cities", ""), r.get("error", "")])
     return str(mdp), str(csvp)
+
+
+# ---------------- хабы: спрос × что у нас уже есть ----------------
+HUBS = {
+    "ui": ["ui дизайн", "ui дизайнер", "дизайн интерфейсов", "ui kit", "ux ui дизайн"],
+    "ux": ["ux дизайн", "ux исследования", "юзабилити", "cjm", "ux дизайнер"],
+    "graphic-design": ["графический дизайн", "графический дизайнер", "графический дизайн для начинающих", "дизайн плаката"],
+    "3d": ["3d дизайн", "3d моделирование", "blender", "3d визуализация", "3d графика"],
+    "career": ["работа дизайнером", "вакансии дизайнер", "зарплата дизайнера", "портфолио дизайнера",
+               "фриланс дизайнер", "резюме дизайнера"],
+    "typography": ["типографика", "шрифты для дизайна", "сочетание шрифтов", "кернинг", "леттеринг"],
+    "motion": ["моушн дизайн", "анимация для дизайнера", "after effects", "моушн дизайнер"],
+    "product-design": ["продуктовый дизайн", "продуктовый дизайнер", "дизайн продукта"],
+    "branding": ["брендинг", "айдентика", "фирменный стиль", "разработка логотипа", "брендбук", "нейминг"],
+    "ai": ["нейросети для дизайна", "нейросеть для дизайнеров", "ии в дизайне", "midjourney",
+           "нейросеть для логотипа", "нейросеть для создания дизайна"],
+    "kreativ": ["креатив", "креативная реклама", "креативные идеи для рекламы"],
+}
+
+
+async def build_hubs() -> str:
+    """По каждой теме сайта: спрос (Вордстат), наши запросы и позиции (Вебмастер), поисковый трафик страницы темы (Метрика)."""
+    from core.seo import apis, keywords, page, store
+    today = dt.date.today()
+    site = f"https://{config.SEO_SITE}"
+    wm = store.get("wm_queries") or []
+    if not wm and apis.has_yandex():
+        try:
+            wm = await apis.wm_queries(28) or []
+        except Exception as e:
+            log.warning("вебмастер: %s", e)
+    org = {}
+    try:
+        end = today - dt.timedelta(days=1)
+        org = {page.norm(u): v for u, v in (await apis.organic_by_page(end - dt.timedelta(days=27), end, 10000) or {}).items()}
+    except Exception as e:
+        log.warning("метрика: %s", e)
+    md = [f"# Хабы: спрос и что у нас уже есть — {today:%d.%m.%Y}", "",
+          "Вордстат — запросов за 30 дней (широкая частота). Вебмастер — запросы, по которым нас показывают (4 недели). "
+          "Метрика — визиты из поиска на страницу темы за 28 дней.", ""]
+    summary = []
+    for slug, phrases in HUBS.items():
+        url = page.norm(f"{site}/{slug}")
+        rows = []
+        for p in phrases:
+            r = {"phrase": p}
+            try:
+                t = await wordstat.top(p, 200)
+                r["total"] = t["total"]
+                r["subs"] = "; ".join(f"{x['phrase']} {x['count']}" for x in t["results"][1:6])
+                r.update(wordstat.trend(await wordstat.dynamics(p)))
+            except Exception as e:
+                r["error"] = str(e)[:100]
+            rows.append(r)
+        rows.sort(key=lambda r: -r.get("total", 0))
+        stems = set().union(*(keywords.stems(p) - wordstat.GENERIC for p in phrases))
+        ours = [q for q in wm if stems & keywords.stems(q["query"])]
+        ours.sort(key=lambda q: -q["shows"])
+        shows = sum(q["shows"] for q in ours)
+        clicks = sum(q["clicks"] for q in ours)
+        near = [q for q in ours if 3.5 < q["pos"] <= 30]
+        demand = sum(r.get("total", 0) for r in rows)
+        summary.append((slug, demand, len(ours), shows, clicks, len(near), org.get(url, 0)))
+        md += [f"## /{slug}", "",
+               f"Поисковый трафик страницы темы: {org.get(url, 0)} визитов за 28 дней. "
+               f"Наших запросов в Вебмастере по теме: {len(ours)} (показов {_n(shows)}, кликов {_n(clicks)}, на 4–30 месте: {len(near)}).", "",
+               "| Фраза | Частота | Год | 3 мес | Главные уточнения |", "|---|---|---|---|---|"]
+        for r in rows:
+            if "error" in r:
+                md.append(f"| {r['phrase']} | ошибка: {r['error']} | | | |")
+                continue
+            yoy = f"{r['yoy']:+d}%" if "yoy" in r else "—"
+            q = f"{r['q']:+d}%" if "q" in r else "—"
+            md.append(f"| {r['phrase']} | {_n(r['total'])} | {yoy} | {q} | {r.get('subs', '')} |")
+        if ours:
+            md += ["", "Наши запросы (Вебмастер, топ-15 по показам):", ""]
+            md += [f"- «{q['query']}» — поз. {q['pos']:.1f}, показов {q['shows']}, кликов {q['clicks']}" for q in ours[:15]]
+        md.append("")
+    md += ["## Сводка", "", "| Тема | Спрос (сумма фраз) | Наших запросов | Показов | Кликов | На 4–30 месте | Визитов на тему из поиска |",
+           "|---|---|---|---|---|---|---|"]
+    for s in sorted(summary, key=lambda x: -x[1]):
+        md.append(f"| /{s[0]} | {_n(s[1])} | {s[2]} | {_n(s[3])} | {_n(s[4])} | {s[5]} | {s[6]} |")
+    out = config.OUTBOX / "seo-plan" / f"hubs-{today:%Y-%m-%d}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("\n".join(md), "utf-8")
+    return str(out)

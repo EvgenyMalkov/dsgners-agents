@@ -509,6 +509,26 @@ async def ws_map(m: Message):
     asyncio.create_task(go())
 
 
+@dp.message(Command("ws_hubs"))
+async def ws_hubs(m: Message):
+    """Темы сайта как хабы: спрос из Вордстата + наши запросы из Вебмастера + трафик из Метрики."""
+    if not is_owner(m):
+        return
+    from core.seo import demand_map, wordstat
+    if not wordstat.enabled():
+        await m.answer("Вордстат API не подключён: WORDSTAT_API_KEY и YC_FOLDER_ID в .env.")
+        return
+    await m.answer(f"Собираю данные по {len(demand_map.HUBS)} темам сайта (Вордстат + Вебмастер + Метрика). 3–5 минут.")
+
+    async def go():
+        try:
+            md = await demand_map.build_hubs()
+            await m.answer_document(FSInputFile(md), caption="🧭 Хабы: спрос и что у нас уже есть — перешли Claude")
+        except Exception as e:
+            await m.answer(f"Не собралось: {e}"[:1000])
+    asyncio.create_task(go())
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -610,7 +630,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                  _b(f"✉️ Советы авторам: {_onoff(author_tips.enabled())}", "t:tips")],
                 [_b("⏸ Остановить SEO-агента", "c:/seo_stop")],
                 [_b("📈 Вордстат: фраза", "i:ws"), _b("🧲 Собрать семантику", "i:ws_parse")],
-                [_b("🗺 Карта спроса по разделам", "c:/ws_map")],
+                [_b("🗺 Карта спроса по разделам", "c:/ws_map"), _b("🧭 Хабы по темам сайта", "c:/ws_hubs")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -643,7 +663,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs"}
 
 
 async def run_cmd(m: Message, user, text: str):
