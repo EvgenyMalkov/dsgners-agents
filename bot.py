@@ -17,7 +17,7 @@ from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton, Inl
                            ReplyKeyboardMarkup, WebAppInfo)
 
 from core import config, feedback, runner, spend
-from core.office import AGENTS
+from core.office import AGENTS, office
 from core.seo import monitor as seo_monitor, scheduler as seo_scheduler
 from core.web import start_web
 
@@ -28,7 +28,8 @@ MSG_JOB: dict[int, str] = {}      # message_id сообщений с резул�
 WAIT_BULK: set[int] = set()       # ждём комментарий к пробной партии массового SEO
 BOT: Bot | None = None
 NEXT_AGENT: dict[int, str] = {}   # выбрал агента в меню — следующее сообщение уйдёт ему
-WAIT_INPUT: dict[int, str] = {}   # ждём ввод для пункта меню (адрес, тема…) -> команда
+WAIT_INPUT: dict[int, str] = {}
+WAIT_OWN: dict[int, tuple[str, str]] = {}   # ждём свой текст поста: user_id -> (flow_id, стиль)   # ждём ввод для пункта меню (адрес, тема…) -> команда
 
 ROUTES = {"design": "designer", "d": "designer", "designer": "designer", "web": "webdesigner", "w": "webdesigner",
           "webdesigner": "webdesigner", "smm": "smm", "s": "smm", "seo": "seo"}
@@ -640,6 +641,15 @@ async def text_task(m: Message):
         except ValueError as e:
             await m.answer(f"Не вышло: {e}")
         return
+    if uid in WAIT_OWN and not m.text.startswith("/"):
+        fid, _ = WAIT_OWN.pop(uid)
+        await go_design(fid, m.text.strip(), m.answer)
+        return
+    if m.reply_to_message and not m.text.startswith("/"):
+        hit = smm_flow.by_msg(m.reply_to_message.message_id)
+        if hit:
+            await rework_variant(hit[0], hit[1], m.text.strip(), m.answer)
+            return
     if uid in WAIT_INPUT and not m.text.startswith("/"):
         await run_cmd(m, m.from_user, f"/{WAIT_INPUT.pop(uid)} {m.text}")
         return
@@ -661,9 +671,160 @@ async def text_task(m: Message):
 IMG = (".png", ".jpg", ".jpeg", ".webp")
 
 
+# ---------- пост SMM: 3 текста → 3 картинки → готовый пост ----------
+from core import smm_flow  # noqa: E402
+
+
+async def send_variants(job: dict):
+    meta = job.get("meta") or {}
+    brief = dict(meta.get("brief") or {})
+    parent = smm_flow.by_rework(job["id"]) or {}
+    for k in ("image_title", "format", "channel", "shots", "task"):
+        if not brief.get(k) and parent.get(k):
+            brief[k] = parent[k]
+    fid = smm_flow.new(task=brief.pop("task", None) or job["task"], smm_job=job["id"], variants=meta["variants"], **brief)
+    msgs = {}
+    for uid in config.OWNER_IDS:
+        await BOT.send_message(uid, f"📣 SMM-щик: {job['caption'][:1500]}\n\n💸 ${job['cost']:.3f}\n\n"
+                                    "Выбери текст — «✅ Беру». Поправить самому — «✏️ Свой текст». "
+                                    "Попросить SMM-щика что-то поменять — ответь на вариант сообщением.")
+        for k, text in meta["variants"].items():
+            kb = InlineKeyboardMarkup(inline_keyboard=[[_b("✅ Беру этот", f"sv:{fid}:{k}"),
+                                                        _b("✏️ Свой текст", f"se:{fid}:{k}")]])
+            sent = await BOT.send_message(uid, f"{smm_flow.STYLE_ICON[k]} {smm_flow.STYLES[k]}\n\n{text}", reply_markup=kb)
+            msgs[str(sent.message_id)] = k
+    smm_flow.update(fid, msgs=msgs)
+
+
+async def go_design(fid: str, text: str, say):
+    flow = smm_flow.get(fid)
+    if not flow:
+        await say("Этот выбор устарел — дай задачу SMM-щику заново.")
+        return
+    if flow.get("designer_job"):
+        await say("Картинки по этому посту уже делаются — дождись их.")
+        return
+    flow = smm_flow.update(fid, text=text)
+    j = office.get_job(flow["smm_job"]) if flow.get("smm_job") else None
+    if j and j["status"] == "review":
+        runner.approve(j["id"])
+    jid = runner.start_job("designer", f"3 картинки к посту: {flow.get('image_title') or flow['task']}"[:200],
+                           source="telegram", full_task=smm_flow.designer_task(flow))
+    smm_flow.update(fid, designer_job=jid)
+    await say("🎨 Текст принят. Графический дизайнер делает 3 картинки — пришлю на выбор.")
+
+
+async def rework_variant(fid: str, style: str, comment: str, say):
+    flow = smm_flow.get(fid)
+    if not flow:
+        await say("Этот вариант устарел — дай задачу SMM-щику заново.")
+        return
+    name = smm_flow.STYLES[style]
+    jid = runner.start_job("smm", f"Правка варианта «{name}»: {comment}"[:200], source="telegram", full_task=(
+        f"Перепиши вариант поста «{name}» по комментарию владельца и сдай через draft_variants ТОЛЬКО поле {style}.\n"
+        f"Комментарий: {comment}\n\nТекущий текст:\n{flow['variants'].get(style, '')}\n\nИсходная задача: {flow['task']}"))
+    smm_flow.update(fid, rework_jobs=(flow.get("rework_jobs") or []) + [jid])
+    await say(f"📣 Передал SMM-щику: переписать «{name}». Пришлю новый вариант.")
+
+
+def _flow_for_designer(job: dict):
+    hit = smm_flow.by_designer_job(job["id"])
+    if not hit and job.get("parent"):
+        hit = smm_flow.by_designer_job(job["parent"])   # «Переделать» картинок — новая задача того же сценария
+        if hit:
+            smm_flow.update(hit[0], designer_job=job["id"])
+    return hit
+
+
+async def send_image_choice(job: dict):
+    fid, flow = _flow_for_designer(job) or smm_flow.by_designer_job(job["id"])
+    imgs = [str(config.OUTBOX / f) for f in job["files"] if f.lower().endswith(IMG)][:6]
+    smm_flow.update(fid, images=imgs)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [_b(f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))],
+        [_b("🔁 Переделать картинки", f"redo:{job['id']}")]])
+    for uid in config.OWNER_IDS:
+        if len(imgs) == 1:
+            MSG_JOB[(await BOT.send_photo(uid, FSInputFile(imgs[0]))).message_id] = job["id"]
+        elif imgs:
+            for sent in await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f), caption=str(i + 1))
+                                                         for i, f in enumerate(imgs)]):
+                MSG_JOB[sent.message_id] = job["id"]
+        sent = await BOT.send_message(uid, f"🎨 {job['caption'][:1200]}\n\n💸 ${job['cost']:.3f}\n\n"
+                                           "Какую картинку берём? Номер — по порядку в альбоме. "
+                                           "Правка — ответом на это сообщение.", reply_markup=kb)
+        MSG_JOB[sent.message_id] = job["id"]
+
+
+async def send_final(fid: str):
+    flow = smm_flow.get(fid)
+    ch = flow.get("channel") or ""
+    rows = [[_b(f"🚀 Опубликовать в {ch}", f"sp:{fid}")]] if ch else []
+    rows.append([_b("🖼 Другая картинка", f"sc:{fid}")])
+    note = "" if ch else "\n\n(канал не задан — это готовый черновик, перешли его в нужный канал)"
+    for uid in config.OWNER_IDS:
+        img, text = flow["image"], flow["text"]
+        if len(text) <= 1024:
+            await BOT.send_photo(uid, FSInputFile(img), caption=text)
+        else:
+            await BOT.send_photo(uid, FSInputFile(img))
+            await BOT.send_message(uid, text)
+        await BOT.send_message(uid, "✅ Готовый пост." + note, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@dp.callback_query(F.data.regexp(r"^s[veicp]:"))
+async def smm_cb(c: CallbackQuery):
+    if not is_owner(c):
+        return
+    kind, fid, *rest = c.data.split(":")
+    flow = smm_flow.get(fid)
+    if not flow:
+        await c.answer("Устарело")
+        return
+    await c.answer()
+    if kind == "sv":
+        await go_design(fid, flow["variants"][rest[0]], c.message.answer)
+    elif kind == "se":
+        WAIT_OWN[c.from_user.id] = (fid, rest[0])
+        await c.message.answer("✏️ Пришли текст поста целиком — можно скопировать вариант выше и поправить. Возьму как есть.")
+    elif kind == "si":
+        i = int(rest[0])
+        imgs = flow.get("images") or []
+        if i >= len(imgs):
+            return
+        smm_flow.update(fid, image=imgs[i])
+        j = office.get_job(flow.get("designer_job") or "")
+        if j and j["status"] == "review":
+            runner.approve(j["id"])
+        await send_final(fid)
+    elif kind == "sc":
+        imgs = flow.get("images") or []
+        await c.message.answer("Какую картинку берём?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [_b(f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))]]))
+    elif kind == "sp":
+        try:
+            text, img = flow["text"], flow["image"]
+            if len(text) <= 1024:
+                await BOT.send_photo(flow["channel"], FSInputFile(img), caption=text)
+            else:
+                await BOT.send_photo(flow["channel"], FSInputFile(img))
+                await BOT.send_message(flow["channel"], text)
+            smm_flow.update(fid, published=time.time())
+            await c.message.edit_reply_markup(reply_markup=None)
+            await c.message.answer(f"🚀 Опубликовано в {flow['channel']}")
+        except Exception as e:
+            await c.message.answer(f"Не опубликовал в {flow['channel']}: {e}\nБот должен быть админом канала.")
+
+
 async def send_review(job: dict):
     """Готовая работа → владельцам в Telegram: картинки альбомом, документы файлами, посты — превью."""
     if not BOT:
+        return
+    if job["agent"] == "smm" and (job.get("meta") or {}).get("variants"):
+        await send_variants(job)
+        return
+    if job["agent"] == "designer" and _flow_for_designer(job):
+        await send_image_choice(job)
         return
     if (config.SEO_AUTO_PLANS and job["agent"] == "seo" and job.get("source") == "content_plan"
             and (job.get("meta") or {}).get("stage") == "plan"):

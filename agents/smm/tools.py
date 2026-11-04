@@ -17,6 +17,19 @@ def system_extra() -> str:
 
 TOOLS = [
     {
+        "name": "draft_variants",
+        "description": "Сдать варианты текста поста владельцу на выбор (основной способ работы). Обычно все три стиля: "
+                       "strict — строгий, деловой; normal — обычный, дружелюбный; bar — очень свойский, как другу в баре "
+                       "(разговорно, с юмором, но без мата и оскорблений). Если владелец просил переписать один вариант — "
+                       "передай только его. Картинки на этом шаге НЕ заказывай: дизайнер получит выбранный текст сам.",
+        "input_schema": {"type": "object", "properties": {
+            "strict": {"type": "string"}, "normal": {"type": "string"}, "bar": {"type": "string"},
+            "image_title": {"type": "string", "description": "короткий заголовок для картинки, 2–6 слов"},
+            "format": {"type": "string", "description": "формат картинки: tg-post (по умолчанию), square, story"},
+            "channel": {"type": "string", "description": "канал из знаний; пусто — черновик"},
+        }},
+    },
+    {
         "name": "draft_post",
         "description": "Добавить пост в пакет на согласование. После «Ок» владельца он уйдёт в указанный канал. "
                        "Текст — обычный, без Markdown-разметки (звёздочки и решётки не нужны), эмодзи — умеренно. "
@@ -46,6 +59,21 @@ def _resolve_image(value: str) -> str | None:
 
 
 async def handle(name: str, inp: dict, ctx: Ctx):
+    if name == "draft_variants":
+        from core.smm_flow import STYLES
+        vs = {k: inp[k].strip() for k in STYLES if (inp.get(k) or "").strip()}
+        if not vs:
+            return [{"type": "text", "text": "Нужен хотя бы один вариант текста."}]
+        long = [STYLES[k] for k, v in vs.items() if len(v) > TG_CAPTION_LIMIT - 30]
+        if long:
+            return [{"type": "text", "text": f"Слишком длинно для подписи к картинке (лимит ~1000 знаков): "
+                                             f"{', '.join(long)}. Сократи."}]
+        ctx.meta["variants"] = vs
+        ctx.meta["brief"] = {"image_title": inp.get("image_title", ""), "format": inp.get("format", ""),
+                             "channel": (inp.get("channel") or "").strip(),
+                             "shots": sorted(str(p) for p in ctx.job_dir.glob("figma-*.png"))}
+        (ctx.job_dir / "variants.md").write_text("\n\n---\n\n".join(f"**{STYLES[k]}**\n\n{v}" for k, v in vs.items()), "utf-8")
+        return [{"type": "text", "text": f"Варианты сохранены ({', '.join(STYLES[k] for k in vs)}). Теперь finish."}]
     if name == "draft_post":
         text = inp["text"].strip()
         img = _resolve_image(inp.get("image", ""))
