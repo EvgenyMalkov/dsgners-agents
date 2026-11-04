@@ -47,7 +47,7 @@ SEO_CRAWL_MAX = int(os.getenv("SEO_CRAWL_MAX", "5000"))          # максим�
 SEO_AUTO_OPTIMIZE_PER_DAY = int(os.getenv("SEO_AUTO_OPTIMIZE_PER_DAY", "10"))  # авто-оформление новых статей
 # Профили редакции (первая часть адреса статьи). Их статьи агент обновляет сам; статьи остальных авторов —
 # только SEO-поля и рекомендации автору, текст не трогаем. Несколько — через запятую.
-SEO_OWN_AUTHORS = {a.strip().lower() for a in os.getenv("SEO_OWN_AUTHORS", "dsgners_study").split(",") if a.strip()}
+SEO_OWN_AUTHORS = {a.strip().lower() for a in os.getenv("SEO_OWN_AUTHORS", "dsgnersstudy").split(",") if a.strip()}
 # Автопилот SEO-агента: сам берёт задачи (новые статьи, недельный отчёт, контент-план, разбор за месяц).
 # 0 — только мониторинг и алерты без ИИ; задачи — только по командам. Переключается в боте: /seo_auto on|off
 SEO_AUTOPILOT = os.getenv("SEO_AUTOPILOT", "0") == "1"

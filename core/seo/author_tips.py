@@ -109,7 +109,8 @@ async def check(url: str, rep: page.PageReport | None = None) -> dict:
     out = next((b.input for b in resp.content if b.type == "tool_use"), None) or {}
     if not out.get("worth_sending") or not out.get("letter"):
         return {"skip": out.get("why_not") or "править почти нечего", "cost": cost}
-    fields = {k: out[k] for k in ("seo_title", "meta_description", "og_title", "og_description") if out.get(k)}
+    from core.seo.bulk import fit_limits
+    fields = fit_limits({k: out[k] for k in ("seo_title", "meta_description") if out.get(k)})
     if out.get("images"):
         fields["images"] = [i for i in out["images"] if i.get("src") and i.get("alt")]
     return {"letter": {"url": url, "subject": (out.get("subject") or "Советы по вашей статье")[:100],

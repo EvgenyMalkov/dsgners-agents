@@ -72,11 +72,13 @@ async def publish(job: dict, own_check) -> tuple[str, list[str]]:
     if cover_url:
         payload["cover_url"] = cover_url
     if art.get("tags"):
-        payload["tags"] = art["tags"]
+        payload["tags"] = art["tags"][:3]
     if art.get("update_url"):
         if not own_check(art["update_url"]):
             raise site_api.SiteAPIError("это статья автора — текст не меняем")
         cur = await site_api.get_article(art["update_url"])
+        if cur.get("is_editorial") is False:
+            raise site_api.SiteAPIError("сайт говорит, что это не статья редакции — текст не меняем")
         aid, url = cur["id"], art["update_url"]
         await site_api.update_article(aid, payload)
         log.append("✅ текст статьи обновлён")
@@ -95,4 +97,5 @@ async def publish(job: dict, own_check) -> tuple[str, list[str]]:
             f["images"] = [dict(i, src=uploaded.get(Path(i["src"]).name, i["src"])) for i in f["images"]]
         await site_api.update_seo(aid, f)
         log.append("✅ SEO-поля записаны")
+    log.append("ℹ️ сайт сам отправит статью в автопостинг Telegram в течение часа — SMM дублировать не нужно")
     return url, log

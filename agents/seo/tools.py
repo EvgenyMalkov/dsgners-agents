@@ -85,7 +85,7 @@ TOOLS = [
             "title": {"type": "string", "description": "заголовок статьи (H1)"},
             "cover_file": {"type": "string", "description": "имя файла обложки от дизайнера, напр. cover.png"},
             "update_url": {"type": "string", "description": "адрес статьи редакции — если это обновление, а не новая"},
-            "tags": {"type": "array", "items": {"type": "string"}, "description": "2–5 тегов, если на сайте есть теги"},
+            "tags": {"type": "array", "items": {"type": "string"}, "description": "до 3 направлений сайта (ui, ux, branding и т.п.) — неизвестные сайт отбросит"},
         }, "required": ["title"]},
     },
     {
@@ -323,7 +323,7 @@ async def set_seo_fields(inp: dict, ctx: Ctx):
         chk = await validate_jsonld({"jsonld": f["jsonld"]}, ctx)
         if not chk[0]["text"].startswith("Разметка в порядке"):
             return [{"type": "text", "text": "Не сохранил: " + chk[0]["text"]}]
-    for k, lim in (("seo_title", 75), ("meta_description", 180)):
+    for k, lim in (("seo_title", 65), ("meta_description", 160)):
         if len(f.get(k, "")) > lim:
             return [{"type": "text", "text": f"{k} длиннее {lim} знаков — сократи."}]
     ctx.meta["seo_fields"] = f

@@ -259,7 +259,7 @@ async def seo_apply_site(job: dict):
             res.append("✅ SEO-поля записаны на сайт")
         if letter:
             last = seo_store.get(f"letter:{aid}", 0)
-            if seo_monitor.is_own(url) or str(art.get("author", "")).lower() in config.SEO_OWN_AUTHORS:
+            if art.get("is_editorial") or seo_monitor.is_own(url) or str(art.get("author", "")).lower() in config.SEO_OWN_AUTHORS:
                 res.append("письмо не отправлял: это статья редакции")
             elif time.time() - last < 30 * 86400:
                 res.append("письмо не отправлял: этому автору по этой статье уже писали меньше 30 дней назад")

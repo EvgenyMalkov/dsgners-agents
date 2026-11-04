@@ -134,6 +134,21 @@ SYSTEM = """Ты — SEO-редактор dsgners.ru (платформа и ме
 - Русский язык, «ё» где нужно."""
 
 
+LIMITS = {"seo_title": 65, "meta_description": 160, "og_title": 65, "og_description": 160}
+
+
+def fit_limits(f: dict) -> dict:
+    """Сайт отвечает 422 на поле длиннее лимита — подрезаем по слову сами."""
+    out = {}
+    for k, lim in LIMITS.items():
+        v = (f.get(k) or "").strip()
+        if len(v) > lim:
+            v = v[:lim - 1].rsplit(" ", 1)[0].rstrip(",.:;—- ") + "…"
+        if k in f:
+            out[k] = v
+    return out
+
+
 def _imgs_without_alt(html: str, base: str, limit=15) -> list[dict]:
     out = []
     for m in re.finditer(r"(?is)<img\b[^>]*>", html):
@@ -181,10 +196,7 @@ async def generate(url: str, client=None) -> dict:
         return {"skip": out["skip"]}
     out["images"] = [i for i in out.get("images") or [] if i.get("src") and i.get("alt")]
     # жёсткие проверки длины — модели тоже ошибаются
-    if len(out.get("seo_title", "")) > 75:
-        out["seo_title"] = out["seo_title"][:72].rsplit(" ", 1)[0]
-    if len(out.get("meta_description", "")) > 180:
-        out["meta_description"] = out["meta_description"][:175].rsplit(" ", 1)[0] + "…"
+    out.update(fit_limits(out))
     return {"fields": out, "before": before}
 
 
