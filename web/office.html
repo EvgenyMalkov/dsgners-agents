@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="ru"><head>
-<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta charset="utf-8"><script async src="https://telegram.org/js/telegram-web-app.js" onload="try{Telegram.WebApp.ready();Telegram.WebApp.expand()}catch(e){}"></script><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>ИИ-офис dsgners</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&family=Press+Start+2P&display=swap" rel="stylesheet">
@@ -234,6 +234,11 @@ pre.cap{font:13px/1.5 var(--f-mono);max-height:50vh;overflow:auto}
 <div class="toast" id="toast"></div>
 
 <script>
+// токен из ссылки (мини-апп в Telegram может не хранить cookie во встроенном окне) — шлём его заголовком
+let TOKEN = '';
+try { TOKEN = new URLSearchParams(location.search).get('token') || sessionStorage.getItem('dsgTok') || '';
+      if (TOKEN) sessionStorage.setItem('dsgTok', TOKEN); } catch (e) {}
+
 (() => {
 const W = 240, H = 150;
 const TEAM = [
@@ -251,7 +256,7 @@ const color = id => css.getPropertyValue('--c-' + id).trim() || '#888';
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const api = async (url, opt = {}) => {
-  const r = await fetch(url, {credentials:'same-origin', ...opt});
+  const r = await fetch(url, {credentials:'same-origin', ...opt, headers:{...(opt && opt.headers || {}), ...(TOKEN ? {'X-Token': TOKEN} : {})}});
   const d = await r.json().catch(() => ({}));
   if (!r.ok) throw new Error(d.error || ('Ошибка ' + r.status));
   return d;
@@ -530,7 +535,7 @@ async function openJob(id){
   dlg.querySelectorAll('[data-open]').forEach(b => b.onclick = () => openJob(b.dataset.open));
   dlg.querySelectorAll('details[data-doc]').forEach((d, i) => {
     const load = async () => { if (d.dataset.loaded) return; d.dataset.loaded = 1;
-      try { const r = await fetch('/files/' + encodeURI(d.dataset.doc)); d.querySelector('pre').textContent = await r.text(); }
+      try { const r = await fetch('/files/' + encodeURI(d.dataset.doc), {headers: TOKEN ? {'X-Token': TOKEN} : {}}); d.querySelector('pre').textContent = await r.text(); }
       catch { d.querySelector('pre').textContent = 'Не удалось загрузить'; } };
     d.addEventListener('toggle', () => d.open && load());
     if (i === 0 && !j.files.some(isImg)) { d.open = true; load(); }
@@ -793,7 +798,7 @@ async function loadState(){
 }
 async function loadJobs(){ jobs = await api('/api/jobs?limit=150'); recalc(); }
 function connect(){
-  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`);
+  const ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws` + (TOKEN ? '?token=' + encodeURIComponent(TOKEN) : ''));
   ws.onopen = () => { $('liveDot').classList.add('on'); $('liveTxt').textContent = 'онлайн'; };
   ws.onmessage = m => { const d = JSON.parse(m.data);
     if (d.type === 'status' && A[d.agent]){ A[d.agent].status = d.status; A[d.agent].task = d.task; renderAgent(d.agent); }

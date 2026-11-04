@@ -29,7 +29,9 @@ async def auth(req: web.Request, handler):
         return web.json_response({"error": "unauthorized"}, status=401)
     resp = await handler(req)
     if req.query.get("token"):
-        resp.set_cookie(COOKIE, config.OFFICE_TOKEN, max_age=3600 * 24 * 180, httponly=True, samesite="Strict")
+        resp.set_cookie(COOKIE, config.OFFICE_TOKEN, max_age=3600 * 24 * 180, httponly=True,
+                        **({"samesite": "None", "secure": True} if req.secure or req.headers.get("X-Forwarded-Proto") == "https"
+                           else {"samesite": "Strict"}))
     return resp
 
 

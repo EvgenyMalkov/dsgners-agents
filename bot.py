@@ -13,7 +13,8 @@ from pathlib import Path
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
-                           InputMediaPhoto, Message)
+                           InputMediaPhoto, KeyboardButton, MenuButtonWebApp, Message,
+                           ReplyKeyboardMarkup, WebAppInfo)
 
 from core import config, feedback, runner, spend
 from core.office import AGENTS
@@ -26,32 +27,18 @@ WAIT_REASON: dict[int, str] = {}
 MSG_JOB: dict[int, str] = {}      # message_id сообщений с результатом -> job_id (ответ на них = правка)  # user_id -> job_id, ждём причину переделки
 WAIT_BULK: set[int] = set()       # ждём комментарий к пробной партии массового SEO
 BOT: Bot | None = None
+NEXT_AGENT: dict[int, str] = {}   # выбрал агента в меню — следующее сообщение уйдёт ему
+WAIT_INPUT: dict[int, str] = {}   # ждём ввод для пункта меню (адрес, тема…) -> команда
 
-ROUTES = {"design": "designer", "d": "designer", "web": "webdesigner", "w": "webdesigner",
-          "smm": "smm", "s": "smm", "seo": "seo"}
+ROUTES = {"design": "designer", "d": "designer", "designer": "designer", "web": "webdesigner", "w": "webdesigner",
+          "webdesigner": "webdesigner", "smm": "smm", "s": "smm", "seo": "seo"}
 ICON = {"designer": "🎨", "webdesigner": "🖥", "smm": "📣", "seo": "🔎"}
 
 HELP = (
     "Команда dsgners на связи.\n\n"
-    "Просто текст — задача графическому дизайнеру. Другим агентам — с командой:\n"
-    "/web задача — веб-дизайнер (макеты блоков и страниц сайта)\n"
-    "/smm задача — SMM-щик (посты в Telegram; публикует только после твоего «Ок»)\n"
-    "/seo задача — SEO-шник (аудит, мета-теги, тексты, ТЗ)\n\n"
-    "Картинку можно прислать с подписью-задачей (тоже с командой, если не дизайнеру).\n\n"
-    "/seo_status — SEO-мониторинг: когда что проверялось и какие проблемы\n"
-    "/seo_scan hourly|new|daily|weekly|monthly — запустить проверку или разбор сейчас\n"
-    "/seo_page адрес — быстрая SEO-проверка страницы (без ИИ, бесплатно)\n"
-    "/seo_fix адрес — оформить статью для поиска (title, description, разметка, alt, ссылки)\n"
-    "/article тема — написать статью: сначала план на согласование, после «Ок» — текст\n"
-    "/seo_tips on|off — письма авторам с советами в день публикации\n"
-    "/seo_stop — остановить SEO-агента (снять очередь, выключить автопилот); /seo_auto on|off — автопилот\n"
-    "/seo_bulk — массово оформить старые статьи (title, description, OG, alt): пробная партия → «Ок» → все\n"
-    "/seo_plan — контент-план сейчас (сам приходит по вторникам): что писать и что обновлять по данным\n"
-    "Файл CSV/XLSX из Вордстата — загрузить спрос в базу SEO-шника\n\n"
-    "/office — ссылка на ИИ-офис\n"
-    "/rules [smm|web|seo] — правила, выученные из твоих правок\n"
-    "/spend — расходы на API за месяц\n"
-    "/rollback — вернуть предыдущую версию системы"
+    "Просто напиши задачу — её возьмёт графический дизайнер. Другому агенту — выбери его в меню ниже "
+    "(или /web, /smm, /seo перед текстом). Картинку можно прислать с подписью-задачей.\n\n"
+    "Правка к готовой работе — ответом на её сообщение. Всё остальное — в меню 👇"
 )
 
 
@@ -75,13 +62,14 @@ async def start(m: Message):
     if not is_owner(m):
         await m.answer(f"Твой Telegram ID: {m.from_user.id}\nВпиши его в OWNER_IDS в файле .env на сервере и перезапусти бота.")
         return
-    await m.answer(HELP)
+    await m.answer("👋", reply_markup=reply_kb())
+    await m.answer(HELP, reply_markup=menu_kb("main"))
 
 
-@dp.message(Command("help"))
+@dp.message(Command("help", "menu"))
 async def help_(m: Message):
     if is_owner(m):
-        await m.answer(HELP)
+        await m.answer(HELP, reply_markup=menu_kb("main"))
 
 
 @dp.message(Command("office"))
@@ -484,6 +472,8 @@ async def with_image(m: Message, bot: Bot):
     dest = config.DATA / "uploads" / f"{uuid.uuid4().hex[:10]}{ext}"
     await bot.download(file_id, destination=dest)
     agent, shown = route(m.caption or "")
+    if not (m.caption or "").startswith("/") and m.from_user.id in NEXT_AGENT:
+        agent = NEXT_AGENT.pop(m.from_user.id)
     shown = shown or "Визуал с прикреплённой работой"
     await _start(m, agent, shown, f"{shown}\n\nПрикреплённая картинка: {dest}")
 
@@ -498,6 +488,136 @@ async def _start(m: Message, agent: str, task: str, full: str | None = None):
         await m.answer(str(e))
         return
     await m.answer(f"{ICON.get(agent, '🤖')} {AGENTS[agent]['title']} взял задачу. Пришлю результат сюда.")
+
+
+# ---------- меню на кнопках ----------
+def office_url() -> str | None:
+    dom = config.ROOT / ".office_domain"
+    if dom.exists() and config.OFFICE_TOKEN:
+        return f"https://{dom.read_text().strip()}/?token={config.OFFICE_TOKEN}"
+    return None
+
+
+def reply_kb() -> ReplyKeyboardMarkup:
+    """Постоянная кнопка под полем ввода."""
+    row = [KeyboardButton(text="📋 Меню")]
+    if office_url():
+        row.append(KeyboardButton(text="🏢 ИИ-офис", web_app=WebAppInfo(url=office_url())))
+    return ReplyKeyboardMarkup(keyboard=[row], resize_keyboard=True, is_persistent=True,
+                               input_field_placeholder="Задача дизайнеру или выбери агента в меню")
+
+
+def _b(text: str, data: str) -> InlineKeyboardButton:
+    return InlineKeyboardButton(text=text, callback_data=data)
+
+
+def _onoff(v: bool) -> str:
+    return "вкл ✅" if v else "выкл"
+
+
+def menu_kb(name: str) -> InlineKeyboardMarkup:
+    back = [_b("« Назад", "m:main")]
+    if name == "main":
+        rows = [[_b("🎨 Графический дизайнер", "a:designer")],
+                [_b("🖥 Веб-дизайнер", "a:webdesigner"), _b("📣 SMM", "a:smm")],
+                [_b("🔎 SEO ▸", "m:seo")],
+                [_b("⚙️ Система ▸", "m:sys")]]
+        if office_url():
+            rows.insert(3, [InlineKeyboardButton(text="🏢 Открыть ИИ-офис", web_app=WebAppInfo(url=office_url()))])
+    elif name == "seo":
+        from core.seo import author_tips
+        rows = [[_b("✏️ Задача SEO-шнику", "a:seo")],
+                [_b("✍️ Написать статью", "i:article"), _b("🛠 Оформить статью", "i:seo_fix")],
+                [_b("📄 Проверить страницу", "i:seo_page"), _b("🗓 Контент-план", "c:/seo_plan")],
+                [_b("📊 Статус мониторинга", "c:/seo_status"), _b("🔍 Проверить сейчас ▸", "m:scan")],
+                [_b("📦 Массово старые статьи", "c:/seo_bulk"), _b("📦 Ход массовой", "c:/seo_bulk status")],
+                [_b(f"🤖 Автопилот: {_onoff(seo_monitor.autopilot())}", "t:auto"),
+                 _b(f"✉️ Советы авторам: {_onoff(author_tips.enabled())}", "t:tips")],
+                [_b("⏸ Остановить SEO-агента", "c:/seo_stop")],
+                [_b("ℹ️ Загрузить Вордстат", "h:wordstat")], back]
+    elif name == "scan":
+        rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
+                [_b("Ежедневная", "c:/seo_scan daily"), _b("Недельный отчёт", "c:/seo_scan weekly")],
+                [_b("Разбор за месяц", "c:/seo_scan monthly")], [_b("« Назад", "m:seo")]]
+    elif name == "sys":
+        rows = [[_b("💸 Расходы за месяц", "c:/spend")],
+                [_b("📏 Выученные правила ▸", "m:rules")],
+                [_b("🔗 Ссылка на офис", "c:/office")],
+                [_b("↩️ Откатить версию системы", "m:rollback")], back]
+    elif name == "rules":
+        rows = [[_b("🎨 Дизайнер", "c:/rules designer"), _b("🖥 Веб", "c:/rules web")],
+                [_b("📣 SMM", "c:/rules smm"), _b("🔎 SEO", "c:/rules seo")], [_b("« Назад", "m:sys")]]
+    elif name == "rollback":
+        rows = [[_b("Да, вернуть предыдущую версию", "c:/rollback")], [_b("« Отмена", "m:sys")]]
+    else:
+        rows = [back]
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+MENU_TITLES = {"main": HELP, "seo": "🔎 SEO-шник", "scan": "🔍 Какую проверку запустить?", "sys": "⚙️ Система",
+               "rules": "📏 Правила, выученные из твоих правок — чьи показать?",
+               "rollback": "↩️ Вернуть предыдущую версию системы? Нужно, только если после обновления что-то сломалось."}
+ASK = {"article": "✍️ Тема статьи? Можно добавить ссылки на работы авторов, которые стоит показать.",
+       "seo_fix": "🛠 Пришли адрес статьи — SEO-шник подготовит title, description, разметку, alt и ссылки.",
+       "seo_page": "📄 Пришли адрес страницы — быстрая проверка без ИИ, бесплатно."}
+HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLSX из Вордстата — фразы попадут в базу SEO-шника."}
+CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
+        "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
+        "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips"}
+
+
+async def run_cmd(m: Message, user, text: str):
+    """Выполнить команду так, будто её набрали руками (обработчики читают аргументы из m.text)."""
+    fake = m.model_copy(update={"text": text, "from_user": user})
+    name = text[1:].split()[0]
+    await globals()[CMDS[name]](fake)
+
+
+@dp.callback_query(F.data.regexp(r"^[mactih]:"))
+async def menu_cb(c: CallbackQuery):
+    if not is_owner(c):
+        return
+    kind, _, arg = c.data.partition(":")
+    uid = c.from_user.id
+    if kind == "m":
+        try:
+            await c.message.edit_text(MENU_TITLES.get(arg, "Меню"), reply_markup=menu_kb(arg))
+        except Exception:
+            pass   # «message is not modified»
+    elif kind == "a":
+        NEXT_AGENT[uid] = arg
+        WAIT_INPUT.pop(uid, None)
+        await c.message.answer(f"{ICON[arg]} {AGENTS[arg]['title']}: пиши задачу — следующее сообщение уйдёт ему "
+                               "(можно картинку с подписью).")
+    elif kind == "i":
+        WAIT_INPUT[uid] = arg
+        NEXT_AGENT.pop(uid, None)
+        await c.message.answer(ASK[arg])
+    elif kind == "h":
+        await c.message.answer(HINTS[arg])
+    elif kind == "t":
+        from core.seo import author_tips
+        if arg == "auto":
+            await run_cmd(c.message, c.from_user, "/seo_auto " + ("off" if seo_monitor.autopilot() else "on"))
+        else:
+            await run_cmd(c.message, c.from_user, "/seo_tips " + ("off" if author_tips.enabled() else "on"))
+        try:
+            await c.message.edit_reply_markup(reply_markup=menu_kb("seo"))
+        except Exception:
+            pass
+    elif kind == "c":
+        await c.answer()
+        await run_cmd(c.message, c.from_user, arg)
+        return
+    await c.answer()
+
+
+@dp.message(F.text == "📋 Меню")
+async def menu_btn(m: Message):
+    if is_owner(m):
+        NEXT_AGENT.pop(m.from_user.id, None)
+        WAIT_INPUT.pop(m.from_user.id, None)
+        await m.answer(HELP, reply_markup=menu_kb("main"))
 
 
 @dp.message(F.text)
@@ -519,6 +639,12 @@ async def text_task(m: Message):
             await m.answer("Записал в правила. Переделываю…")
         except ValueError as e:
             await m.answer(f"Не вышло: {e}")
+        return
+    if uid in WAIT_INPUT and not m.text.startswith("/"):
+        await run_cmd(m, m.from_user, f"/{WAIT_INPUT.pop(uid)} {m.text}")
+        return
+    if uid in NEXT_AGENT and not m.text.startswith("/"):
+        await _start(m, NEXT_AGENT.pop(uid), m.text.strip())
         return
     rep = m.reply_to_message
     if rep and rep.message_id in MSG_JOB and not m.text.startswith("/"):
@@ -665,6 +791,18 @@ async def main():
         logging.warning("Нет TELEGRAM_BOT_TOKEN — работает только офис")
         await asyncio.Event().wait()
     BOT = Bot(config.TELEGRAM_BOT_TOKEN)
+    try:
+        from aiogram.types import BotCommand
+        await BOT.set_my_commands([BotCommand(command="menu", description="Меню"),
+                                   BotCommand(command="office", description="Ссылка на ИИ-офис"),
+                                   BotCommand(command="spend", description="Расходы за месяц")])
+        if office_url():
+            # синяя кнопка слева от поля ввода открывает ИИ-офис прямо в Telegram (мини-апп)
+            for uid in config.OWNER_IDS:
+                await BOT.set_chat_menu_button(chat_id=uid, menu_button=MenuButtonWebApp(
+                    text="Офис", web_app=WebAppInfo(url=office_url())))
+    except Exception:
+        logging.exception("не удалось настроить меню бота")
     runner.on_review(send_review)
     runner.on_approved(publish_posts)
     runner.on_approved(seo_after_approve)
