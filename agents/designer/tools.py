@@ -109,7 +109,13 @@ async def handle(name: str, inp: dict, ctx: Ctx):
         issues = await render(inp["template"], inp.get("data", {}), png)
         png.with_suffix(".json").write_text(json.dumps({"template": inp["template"], "data": inp.get("data", {})},
                                                        ensure_ascii=False), "utf-8")
-        issues += _feature_check(inp, ctx)
+        fi = _feature_check(inp, ctx)
+        blocked = ctx.meta.setdefault("feature_blocked", [])
+        if fi and fname not in blocked:
+            blocked.append(fname)
+        elif not fi and fname in blocked:
+            blocked.remove(fname)
+        issues += fi
         text = ("Проблем нет." if not issues else "Найдены проблемы:\n- " + "\n- ".join(issues))
         return [{"type": "text", "text": f"Файл: {fname}\n{text}"}, image_block(png)]
 
@@ -121,6 +127,11 @@ async def handle(name: str, inp: dict, ctx: Ctx):
                 files.append(p)
         if not files:
             return [{"type": "text", "text": "Ни одного из этих файлов нет — сначала render_visual."}]
+        bad = [p.stem for p in files if p.stem in ctx.meta.get("feature_blocked", [])]
+        if bad and ctx.meta.get("figma_empty", 0) < 2:
+            return [{"type": "text", "text": "Не сдаю: " + ", ".join(bad) + " — визуал про фичу сайта без экрана. "
+                     "Это правило важнее любых «как в прошлый раз» и «те же параметры». Возьми экраны (из задачи или "
+                     "figma_find → figma_export) и собери promo / promo-duo / showcase."}]
         ctx.files, ctx.caption, ctx.done = files, inp.get("caption", ""), True
         return [{"type": "text", "text": "Сдано на согласование."}]
 

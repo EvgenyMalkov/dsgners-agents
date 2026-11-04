@@ -171,6 +171,7 @@ async def find(inp: dict, ctx: Ctx):
         scored.append((sc + (1 if top else 0), -len(n["path"]), n))
     hits = [n for sc, _, n in sorted(scored, key=lambda x: (-x[0], x[1])) if sc > 0][:30]
     if not hits:
+        ctx.meta["figma_empty"] = ctx.meta.get("figma_empty", 0) + 1   # 2 пустых поиска — экранов правда нет
         return [{"type": "text", "text": f"В файле «{file}» по «{inp.get('query')}» ничего. "
                                          f"Вызови figma_find с пустым query — покажу список страниц."}]
     lines = [f"- {n['id']} | {n['type']} | {n['w']}×{n['h']} | {n['path']}" for n in hits]
