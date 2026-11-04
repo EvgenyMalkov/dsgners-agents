@@ -8,6 +8,7 @@ import asyncio
 import time
 import logging
 import uuid
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
@@ -546,6 +547,10 @@ async def send_review(job: dict):
     imgs = [f for f in files if f.suffix.lower() in IMG and f.exists()][:10]
     docs = [f for f in files if f.suffix.lower() not in IMG and f.exists() and f.name != "posts.md"][:5]
     posts = (job.get("meta") or {}).get("posts") or []
+    if any(p.get("image") for p in posts):
+        # у SMM показываем то, что уйдёт в канал: картинка вместе с текстом поста, без рабочих материалов
+        imgs = []
+    imgs = [f for f in imgs if not f.name.startswith("figma-")]
     title = f"{ICON.get(job['agent'], '🤖')} {AGENTS[job['agent']]['title']}"
     from core import site_api
     meta = job.get("meta") or {}
@@ -576,7 +581,15 @@ async def send_review(job: dict):
                 f"{k}: {f[k]}" for k in ("seo_title", "meta_description", "og_title") if f.get(k))
                 + (f"\nalt картинок: {len(f.get('images') or [])}; разметка: {'да' if f.get('jsonld') else 'нет'}"))
         for i, p in enumerate(posts, 1):
-            await BOT.send_message(uid, f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n{p['text'][:3900]}")
+            head = f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n"
+            img = p.get("image")
+            if img and Path(img).exists() and len(head + p["text"]) <= 1024:
+                sent = await BOT.send_photo(uid, FSInputFile(img), caption=head + p["text"])
+            else:
+                if img and Path(img).exists():
+                    MSG_JOB[(await BOT.send_photo(uid, FSInputFile(img))).message_id] = job["id"]
+                sent = await BOT.send_message(uid, head + p["text"][:3900])
+            MSG_JOB[sent.message_id] = job["id"]
         sent = await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}\n\n"
                                       "Правки — ответом на это сообщение или кнопкой «Переделать».", reply_markup=kb)
         MSG_JOB[sent.message_id] = job["id"]

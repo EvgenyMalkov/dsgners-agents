@@ -153,7 +153,9 @@ FINISH = {
 
 async def finish(inp: dict, ctx: Ctx):
     from core import config
-    own = sorted(p for p in ctx.job_dir.iterdir() if p.suffix in (".md", ".png", ".html") and p.name != "task.md")
+    # рабочие материалы (выгрузки из Figma: экраны, ТЗ) — не результат, на согласование их не шлём
+    own = sorted(p for p in ctx.job_dir.iterdir() if p.suffix in (".md", ".png", ".html") and p.name != "task.md"
+                 and not p.name.startswith("figma-"))
     extra = [config.OUTBOX / f for f in ctx.meta.get("from_colleagues", [])]
     ctx.files = own + [p for p in extra if p.exists()]
     ctx.caption = inp.get("summary", "")
