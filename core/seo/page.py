@@ -16,7 +16,8 @@ import aiohttp
 
 UA = "Mozilla/5.0 (compatible; dsgners-seo-bot/1.0; +https://dsgners.ru)"
 
-TITLE_MIN, TITLE_MAX = 25, 70
+TITLE_MIN, TITLE_MAX = 25, 65      # длина поля SEO title без названия сайта
+SITE_SUFFIXES = (" — дизайнерс", " - дизайнерс", " | дизайнерс")  # сайт дописывает сам — в длину не считаем
 DESC_MIN, DESC_MAX = 70, 170
 THIN_WORDS = 250
 SITEMAP_TIMEOUT = 120   # секунд на один sitemap-файл (секции на тысячи адресов генерируются долго)
@@ -294,10 +295,10 @@ def analyze(f: Fetched, is_article: bool = False) -> PageReport:
         rep.add("info", "no_canonical", "Нет canonical")
     if not rep.title:
         rep.add("critical", "no_title", "Нет title")
-    elif len(rep.title) < TITLE_MIN:
-        rep.add("warning", "title_short", f"title короткий ({len(rep.title)} симв.) — мало ключевых слов в сниппете")
-    elif len(rep.title) > TITLE_MAX:
-        rep.add("info", "title_long", f"title длинный ({len(rep.title)} симв.) — обрежется в выдаче")
+    elif len(base := next((rep.title[:-len(x)] for x in SITE_SUFFIXES if rep.title.endswith(x)), rep.title)) < TITLE_MIN:
+        rep.add("warning", "title_short", f"title короткий ({len(base)} симв. без названия сайта) — мало ключевых слов в сниппете")
+    elif len(base) > TITLE_MAX:
+        rep.add("info", "title_long", f"title длинный ({len(base)} симв. без названия сайта, норма до {TITLE_MAX}) — обрежется в выдаче")
     if not rep.description:
         rep.add("warning", "no_description", "Нет meta description — поисковик сам соберёт сниппет из текста")
     elif len(rep.description) < DESC_MIN:
