@@ -132,7 +132,13 @@ async def ask_colleague(inp: dict, ctx: Ctx):
         return [{"type": "text", "text": "Нельзя поручить задачу самому себе."}]
     if ctx.progress:
         await ctx.progress(f"попросил коллегу ({who})")
-    job = await runner.run_internal(who, inp["task"], parent=ctx.job_id, requester=ctx.agent)
+    task = inp["task"]
+    # экраны, которые запросивший уже выгрузил из Figma, передаём коллеге автоматически — чтобы не делал «пустую» картинку
+    shots = sorted(str(p) for p in ctx.job_dir.glob("figma-*.png"))
+    if shots:
+        task += ("\n\nЭкраны из Figma, которые я уже выгрузил (бери их в визуал — поле image/images, "
+                 "шаблоны showcase / promo / promo-duo):\n" + "\n".join(f"- {s}" for s in shots[:8]))
+    job = await runner.run_internal(who, task, parent=ctx.job_id, requester=ctx.agent)
     files = [config.OUTBOX / f for f in job.get("files", [])]
     ctx.meta.setdefault("from_colleagues", []).extend(job.get("files", []))
     names = [f"{f.parent.name}/{f.name}" for f in files]
