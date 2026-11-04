@@ -610,6 +610,27 @@ async def cluster_cmd(m: Message):
     asyncio.create_task(go())
 
 
+@dp.message(Command("cluster_pick"))
+async def cluster_pick(m: Message):
+    """Подборки статей под блоки подстраницы хаба: /cluster_pick logo (rebrending, firmennyj-stil, aydentika, brendbuk, upakovka, branding)."""
+    if not is_owner(m):
+        return
+    from core.seo import pick
+    key = (m.text or "").partition(" ")[2].strip().lower() or "logo"
+    if key not in pick.SUBPAGES:
+        await m.answer(f"Подстраницы: {pick.keys()}. Пример: /cluster_pick logo")
+        return
+    await m.answer(f"Раскладываю статьи подтемы по блокам страницы «{key}»… 1–3 минуты.")
+
+    async def go():
+        try:
+            md = await pick.build(key)
+            await m.answer_document(FSInputFile(md), caption=f"📚 Подборки для «{key}» — на утверждение, перешли Claude")
+        except Exception as e:
+            await m.answer(f"Не собралось: {e}"[:1000])
+    asyncio.create_task(go())
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -714,7 +735,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("🗺 Карта спроса по разделам", "c:/ws_map"), _b("🧭 Хабы по темам сайта", "c:/ws_hubs")],
                 [_b("📊 Посещаемость тем", "c:/topics_traffic"), _b("🗂 База под хабы", "c:/hub_inventory")],
                 [_b("🤖 Разложить базу моделью", "c:/hub_classify"), _b("Ход раскладки", "c:/hub_classify status")],
-                [_b("🧩 Кластер «Брендинг»", "c:/cluster branding")],
+                [_b("🧩 Кластер «Брендинг»", "c:/cluster branding"), _b("📚 Подборки «Логотип»", "c:/cluster_pick logo")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -747,7 +768,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick"}
 
 
 async def run_cmd(m: Message, user, text: str):
