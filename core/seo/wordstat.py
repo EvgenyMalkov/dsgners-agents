@@ -58,6 +58,12 @@ def _float(v) -> float:
 def _cdb():
     d = store.db()
     d.execute("CREATE TABLE IF NOT EXISTS ws_cache(key TEXT PRIMARY KEY, data TEXT, ts REAL)")
+    if not store.get("ws_clean_v1"):
+        # первая версия складывала в базу шумные «похожие» (дизайн гостиной и т.п.) — убираем их и кеш один раз
+        keywords._db().execute("DELETE FROM keywords WHERE source='wordstat-api'")
+        d.execute("DELETE FROM ws_cache")
+        d.commit()
+        store.put("ws_clean_v1", True)
     return d
 
 
@@ -127,15 +133,30 @@ def _clean(phrase: str) -> str:
 
 
 # ---------- методы ----------
+GENERIC = {"дизай", "desig", "дизей", "как", "для", "что", "это", "онлай", "бесп"}
+
+
+def related(seed: str, phrase: str) -> bool:
+    """Похожий запрос относится к теме: есть общее смысловое слово (общие слова вроде «дизайн» не в счёт,
+    если во фразе есть что-то конкретнее)."""
+    s, p = keywords.stems(seed), keywords.stems(phrase)
+    core = s - GENERIC
+    return bool(core & p) if core else bool(s & p)
+
+
 async def top(phrase: str, n: int = 200, regions=None, device: str | None = None, save: bool = True) -> dict:
     """Популярные запросы с фразой за 30 дней + похожие. save — сложить фразы в базу SEO-шника."""
     body = {"phrase": _clean(phrase), "numPhrases": str(max(1, min(n, 2000))), "devices": _devices(device)}
     if rg := _regions(regions):
         body["regions"] = rg
     d = await _post("topRequests", body)
+    assoc = [{"phrase": x.get("phrase", ""), "count": _int(x.get("count"))} for x in d.get("associations", [])]
+    # «похожие» у Вордстата часто шумные (дизайн гостиной на «портфолио дизайнера»): оставляем только те,
+    # где совпадает смысловое слово фразы, а не общее «дизайн»
+    assoc = sorted((a for a in assoc if related(phrase, a["phrase"])), key=lambda a: -a["count"])
     res = {"phrase": phrase, "total": _int(d.get("totalCount")),
            "results": [{"phrase": x.get("phrase", ""), "count": _int(x.get("count"))} for x in d.get("results", [])],
-           "associations": [{"phrase": x.get("phrase", ""), "count": _int(x.get("count"))} for x in d.get("associations", [])]}
+           "associations": assoc}
     if save:
         keywords.add_many([(x["phrase"], x["count"]) for x in res["results"] + res["associations"]], "wordstat-api")
     return res
@@ -208,16 +229,16 @@ def trend_text(t: dict) -> str:
     return ", ".join(parts) or "мало данных для тренда"
 
 
-async def regions_tree() -> dict[str, str]:
-    """{id: название} для всех регионов Вордстата."""
+async def regions_tree() -> dict[str, tuple[str, int]]:
+    """{id: (название, уровень)}: 1 — страна, 2 — федеральный округ, 3 — область, 4+ — города."""
     d = await _post("getRegionsTree", {}, ttl=30 * 86400)
     out = {}
 
-    def walk(items):
+    def walk(items, lvl):
         for r in items or []:
-            out[str(r.get("id"))] = r.get("label", "")
-            walk(r.get("children"))
-    walk(d.get("regions"))
+            out[str(r.get("id"))] = (r.get("label", ""), lvl)
+            walk(r.get("children"), lvl + 1)
+    walk(d.get("regions"), 1)
     return out
 
 
@@ -230,9 +251,16 @@ async def regions(phrase: str, kind: str = "regions", device: str | None = None,
         names = await regions_tree()
     except Exception as e:
         log.warning("дерево регионов: %s", e)
-    rows = [{"region": names.get(str(x.get("region")), str(x.get("region"))), "count": _int(x.get("count")),
-             "share": _float(x.get("share")), "affinity": round(_float(x.get("affinityIndex")))}
-            for x in d.get("results", [])]
+    rows = []
+    for x in d.get("results", []):
+        rid = str(x.get("region"))
+        name, lvl = names.get(rid, (rid, 0))
+        if names and kind == "regions" and lvl and lvl < 3:   # страна и федеральные округа — не регионы
+            continue
+        if names and kind == "cities" and lvl and lvl < 3:
+            continue
+        rows.append({"region": name, "count": _int(x.get("count")),
+                     "share": _float(x.get("share")), "affinity": round(_float(x.get("affinityIndex")))})
     rows.sort(key=lambda r: -r["count"])
     return rows[:limit]
 
