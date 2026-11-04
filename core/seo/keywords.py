@@ -1,4 +1,4 @@
-"""Семантика: выгрузки Вордстата (CSV/XLSX, присланные в бот) + запросы из Вебмастера.
+"""Семантика: Вордстат (по API — core/seo/wordstat.py — и выгрузки CSV/XLSX, присланные в бот) + запросы из Вебмастера.
 
 Вордстат-выгрузку владелец кидает боту файлом с подписью «вордстат». Парсер понимает обычные выгрузки:
 первая текстовая колонка — фраза, первая числовая — частотность. Повторная выгрузка обновляет частоты.
@@ -50,6 +50,21 @@ def import_file(name: str, data: bytes, source: str = "wordstat") -> int:
         phrase = re.sub(r"\s+", " ", phrase.lower().replace("+", "").replace("\"", "").replace("!", "")).strip()
         d.execute("INSERT OR REPLACE INTO keywords(phrase,freq,source,added) VALUES(?,?,?,?)",
                   (phrase, freq, source, time.time()))
+        n += 1
+    d.commit()
+    return n
+
+
+def add_many(rows, source: str = "wordstat-api") -> int:
+    """Добавить пары (фраза, частота) — например, из Вордстата по API. Повтор обновляет частоту."""
+    d = _db()
+    n = 0
+    for phrase, freq in rows:
+        phrase = re.sub(r"\s+", " ", str(phrase or "").lower().replace("+", "").replace("\"", "").replace("!", "")).strip()
+        if not phrase or len(phrase) > 200 or freq is None:
+            continue
+        d.execute("INSERT OR REPLACE INTO keywords(phrase,freq,source,added) VALUES(?,?,?,?)",
+                  (phrase, int(freq), source, time.time()))
         n += 1
     d.commit()
     return n

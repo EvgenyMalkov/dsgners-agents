@@ -105,6 +105,25 @@ TOOLS = [
         "input_schema": {"type": "object", "properties": {"topic": {"type": "string"}}, "required": ["topic"]},
     },
     {
+        "name": "wordstat",
+        "description": "Вордстат по API (живые данные Яндекса). action: "
+                       "top — что ищут со словами фразы за 30 дней + похожие запросы (фразы сохраняются в базу); "
+                       "dynamics — частота по месяцам за 2 года (или weekly/daily) + рост к прошлому году и сезонный пик; "
+                       "regions — где ищут чаще (индекс > 100 — выше среднего по стране); "
+                       "compare — сравнить 2–15 формулировок: частота и тренд, чтобы выбрать главный запрос; "
+                       "parse — собрать семантику по теме (топ + похожие, depth 2 — на шаг глубже). "
+                       "Частоты «широкие»: все запросы со словами фразы. Если API не подключён — вернёт ошибку, не выдумывай цифры.",
+        "input_schema": {"type": "object", "properties": {
+            "action": {"type": "string", "enum": ["top", "dynamics", "regions", "compare", "parse"]},
+            "phrase": {"type": "string", "description": "фраза — для top, dynamics, regions, parse"},
+            "phrases": {"type": "array", "items": {"type": "string"}, "description": "фразы — для compare"},
+            "period": {"type": "string", "enum": ["monthly", "weekly", "daily"], "description": "для dynamics"},
+            "device": {"type": "string", "enum": ["all", "desktop", "phone", "tablet"]},
+            "regions": {"type": "string", "description": "ID регионов через запятую (225 — Россия, 213 — Москва, 2 — Петербург); пусто — по умолчанию"},
+            "depth": {"type": "integer", "description": "для parse: 1 или 2"},
+        }, "required": ["action"]},
+    },
+    {
         "name": "propose_topics",
         "description": "Сдать контент-план: список тем на согласование. После «Ок» владельца по каждой теме "
                        "автоматически запустится написание плана статьи. После propose_topics — save_document и finish.",
@@ -150,7 +169,13 @@ def system_extra() -> str:
     from core.seo import apis
     return (f"# Данные, которые у тебя есть\n"
             f"- Мониторинг сайта {config.SEO_SITE} знает {len(store.known_urls())} адресов из sitemap.\n"
-            f"- Яндекс Вебмастер и Метрика: {'подключены (данные приходят в отчётах мониторинга)' if apis.has_yandex() else 'не подключены — частотности, позиции и трафик не выдумывай'}.")
+            f"- Яндекс Вебмастер и Метрика: {'подключены (данные приходят в отчётах мониторинга)' if apis.has_yandex() else 'не подключены — частотности, позиции и трафик не выдумывай'}.\n"
+            f"- Вордстат: {'API подключён — инструмент wordstat (top, dynamics, regions, compare, parse); главный запрос выбирай сравнением формулировок, сезонность смотри в dynamics' if _ws_on() else 'API не подключён — только выгрузки через keyword_data'}.")
+
+
+def _ws_on() -> bool:
+    from core.seo import wordstat
+    return wordstat.enabled()
 
 
 async def check_site(inp: dict, ctx: Ctx):
@@ -290,6 +315,13 @@ async def keyword_data(inp: dict, ctx: Ctx):
     topic = inp["topic"]
     out = []
     ws = keywords.search(topic)
+    from core.seo import wordstat as wsa
+    if len(ws) < 10 and wsa.enabled():
+        try:
+            await wsa.top(topic, 300)
+            ws = keywords.search(topic)
+        except Exception as e:
+            out.append(f"Вордстат API недоступен: {e}")
     out.append("Вордстат: " + ("\n" + "\n".join(f"  «{k['phrase']}» — {k['freq']}/мес" for k in ws[:30])
                                if ws else ("по теме ничего" if keywords.count() else "выгрузок нет")))
     t = keywords.stems(topic)
@@ -301,6 +333,39 @@ async def keyword_data(inp: dict, ctx: Ctx):
     rel = await related_pages({"topic": topic}, ctx)
     out.append("Наши страницы по теме:\n" + rel[0]["text"])
     return [{"type": "text", "text": "\n\n".join(out)}]
+
+
+async def wordstat(inp: dict, ctx: Ctx):
+    from core.seo import wordstat as ws
+    if not ws.enabled():
+        return [{"type": "text", "text": "Вордстат API не подключён (нет WORDSTAT_API_KEY / YC_FOLDER_ID). "
+                                         "Используй keyword_data (выгрузки) и не называй частотности без данных."}]
+    a, ph = inp.get("action"), (inp.get("phrase") or "").strip()
+    rg = inp.get("regions") or None
+    dev = inp.get("device")
+    if ctx.progress:
+        await ctx.progress(f"Вордстат: {a} «{ph or ', '.join(inp.get('phrases', [])[:3])}»")
+    try:
+        if a == "compare":
+            txt = ws.fmt_compare(await ws.compare(inp.get("phrases") or [], rg, dev))
+        elif not ph:
+            txt = "Нужна phrase."
+        elif a == "top":
+            txt = ws.fmt_top(await ws.top(ph, 200, rg, dev), 40)
+        elif a == "dynamics":
+            per = inp.get("period") or "monthly"
+            txt = f"Динамика «{ph}» ({per}):\n" + ws.fmt_dynamics(await ws.dynamics(ph, per, None, rg, dev), per)
+        elif a == "regions":
+            txt = f"Где ищут «{ph}»:\n" + ws.fmt_regions(await ws.regions(ph, "regions", dev))
+        elif a == "parse":
+            r = await ws.parse(ph, 1000, int(inp.get("depth") or 1), rg)
+            txt = (f"Собрал {r['collected']} фраз по «{ph}» (всего запросов за 30 дней: {r['total']}), они в базе — "
+                   "доступны через keyword_data. Главные:\n" + "\n".join(f"  {x['count']}  {x['phrase']}" for x in r["top"]))
+        else:
+            txt = f"Нет действия {a}"
+    except Exception as e:
+        txt = f"Вордстат API ошибка: {e}"
+    return [{"type": "text", "text": txt[:12000]}]
 
 
 async def propose_topics(inp: dict, ctx: Ctx):
@@ -352,7 +417,7 @@ async def set_author_letter(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": "Письмо сохранено — после «Ок» уйдёт автору."}]
 
 
-HANDLERS = {"set_article": set_article, "set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
+HANDLERS = {"set_article": set_article, "set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "wordstat": wordstat, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
             "validate_jsonld": validate_jsonld}
 
 

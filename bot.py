@@ -435,6 +435,58 @@ async def seo_plan(m: Message):
     await m.answer(f"🔎 {await seo_scheduler.run('content_plan')}")
 
 
+@dp.message(Command("ws"))
+async def ws_cmd(m: Message):
+    """/ws фраза — частота, что ищут, динамика, регионы; /ws фраза1 | фраза2 — сравнение."""
+    if not is_owner(m):
+        return
+    from core.seo import wordstat
+    arg = (m.text or "").partition(" ")[2].strip()
+    if not wordstat.enabled():
+        await m.answer("Вордстат API не подключён: впиши WORDSTAT_API_KEY и YC_FOLDER_ID в .env на сервере. "
+                       "Пока можно прислать выгрузку CSV/XLSX файлом.")
+        return
+    if not arg:
+        await m.answer("Примеры:\n/ws портфолио дизайнера — частота, что ищут, динамика, регионы\n"
+                       "/ws портфолио дизайнера | портфолио ux | как сделать портфолио — сравнить\n"
+                       "/ws_parse портфолио дизайнера — собрать семантику в базу SEO-шника")
+        return
+    try:
+        if "|" in arg:
+            phrases = [p.strip() for p in arg.split("|") if p.strip()]
+            await m.answer(f"Сравниваю {len(phrases)} фраз…")
+            await m.answer("📈 Вордстат, сравнение\n\n" + wordstat.fmt_compare(await wordstat.compare(phrases)))
+            return
+        top = await wordstat.top(arg, 200)
+        dyn = await wordstat.dynamics(arg)
+        reg = await wordstat.regions(arg, "regions", limit=7)
+        await m.answer(f"📈 {wordstat.fmt_top(top, 15)}\n\nПо месяцам:\n{wordstat.fmt_dynamics(dyn)}"
+                       f"\n\nГде ищут чаще:\n{wordstat.fmt_regions(reg)}"[:3900])
+    except Exception as e:
+        await m.answer(f"Вордстат: {e}"[:1000])
+
+
+@dp.message(Command("ws_parse"))
+async def ws_parse(m: Message):
+    if not is_owner(m):
+        return
+    from core.seo import keywords, wordstat
+    arg = (m.text or "").partition(" ")[2].strip()
+    if not arg or not wordstat.enabled():
+        await m.answer("Пример: /ws_parse портфолио дизайнера" if wordstat.enabled() else
+                       "Вордстат API не подключён: WORDSTAT_API_KEY и YC_FOLDER_ID в .env.")
+        return
+    await m.answer(f"Собираю семантику по «{arg}» (топ + похожие, на шаг глубже)…")
+    try:
+        r = await wordstat.parse(arg, 1000, depth=2)
+    except Exception as e:
+        await m.answer(f"Вордстат: {e}"[:1000])
+        return
+    await m.answer(f"📥 «{arg}»: собрал {r['collected']} фраз, всего в базе {keywords.count()}. "
+                   "SEO-шник учтёт их в контент-плане и статьях.\n\n"
+                   + "\n".join(f"{x['count']:>8}  {x['phrase']}" for x in r["top"][:20]))
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -535,7 +587,8 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b(f"🤖 Автопилот: {_onoff(seo_monitor.autopilot())}", "t:auto"),
                  _b(f"✉️ Советы авторам: {_onoff(author_tips.enabled())}", "t:tips")],
                 [_b("⏸ Остановить SEO-агента", "c:/seo_stop")],
-                [_b("ℹ️ Загрузить Вордстат", "h:wordstat")], back]
+                [_b("📈 Вордстат: фраза", "i:ws"), _b("🧲 Собрать семантику", "i:ws_parse")],
+                [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
                 [_b("Ежедневная", "c:/seo_scan daily"), _b("Недельный отчёт", "c:/seo_scan weekly")],
@@ -560,11 +613,14 @@ MENU_TITLES = {"main": HELP, "seo": "🔎 SEO-шник", "scan": "🔍 Каку�
                "rollback": "↩️ Вернуть предыдущую версию системы? Нужно, только если после обновления что-то сломалось."}
 ASK = {"article": "✍️ Тема статьи? Можно добавить ссылки на работы авторов, которые стоит показать.",
        "seo_fix": "🛠 Пришли адрес статьи — SEO-шник подготовит title, description, разметку, alt и ссылки.",
-       "seo_page": "📄 Пришли адрес страницы — быстрая проверка без ИИ, бесплатно."}
+       "seo_page": "📄 Пришли адрес страницы — быстрая проверка без ИИ, бесплатно.",
+       "ws": "📈 Фраза для Вордстата. Несколько через « | » — сравню их.",
+       "ws_parse": "🧲 По какой фразе собрать семантику? Фразы лягут в базу SEO-шника."}
 HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLSX из Вордстата — фразы попадут в базу SEO-шника."}
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
-        "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips"}
+        "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
+        "ws": "ws_cmd", "ws_parse": "ws_parse"}
 
 
 async def run_cmd(m: Message, user, text: str):

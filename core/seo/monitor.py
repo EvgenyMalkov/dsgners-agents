@@ -517,7 +517,10 @@ def status_text() -> str:
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
     lines.append("IndexNow: " + ("подключён" if config.INDEXNOW_KEY else "нет ключа"))
     from core.seo import keywords
-    lines.append(f"Вордстат: {keywords.count()} фраз" if keywords.count() else "Вордстат: выгрузок нет (пришли CSV/XLSX с подписью «вордстат»)")
+    from core.seo import wordstat
+    lines.append(f"Вордстат: {keywords.count()} фраз в базе" if keywords.count() else "Вордстат: фраз в базе нет")
+    lines.append("Вордстат API: " + (f"подключён (базовых фраз: {len(config.WORDSTAT_SEEDS)}, /ws)" if wordstat.enabled()
+                                     else "нет ключа — только выгрузки CSV/XLSX"))
     return "\n".join(lines)
 
 
@@ -669,12 +672,33 @@ async def content_plan() -> str:
                 L.append("")
         except Exception as e:
             L.append(f"_Метрика недоступна: {e}_")
+    from core.seo import wordstat
+    if wordstat.enabled():
+        try:
+            note = await wordstat.refresh_seeds()
+            if note:
+                L.append(f"_{note}_\n")
+        except Exception as e:
+            L.append(f"_Вордстат API недоступен: {e}_\n")
     if keywords.count():
         gaps = [k for k in keywords.top(400) if not keywords.covered(k["phrase"], titles)][:60]
         if gaps:
             L.append("## Спрос из Вордстата, под который у нас нет страницы (частотность в месяц)")
             L += [f"- «{k['phrase']}» — {k['freq']}" for k in gaps]
             L.append("")
+        if gaps and wordstat.enabled():
+            rising = []
+            for k in gaps[:25]:
+                try:
+                    t = wordstat.trend(await wordstat.dynamics(k["phrase"]))
+                except Exception:
+                    break
+                if t.get("yoy", 0) >= 20 or t.get("q", 0) >= 25:
+                    rising.append((k, t))
+            if rising:
+                L.append("## Растущий спрос (Вордстат, динамика за 2 года) — брать в первую очередь")
+                L += [f"- «{k['phrase']}» — {k['freq']}/мес, {wordstat.trend_text(t)}" for k, t in rising]
+                L.append("")
     else:
         L.append("_Выгрузок Вордстата нет — спрос оценивай по Вебмастеру и поиску; скажи владельцу, какие выгрузки сделать._\n")
     hist = store.get("content_topics", [])

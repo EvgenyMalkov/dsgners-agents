@@ -67,6 +67,14 @@ SEO_TZ = os.getenv("SEO_TZ", "Europe/Moscow")
 YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN", "")
 METRIKA_COUNTER_ID = os.getenv("METRIKA_COUNTER_ID", "")
 INDEXNOW_KEY = os.getenv("INDEXNOW_KEY", "")
+# Вордстат по API (Yandex Cloud Search API): API-ключ сервисного аккаунта с ролью search-api.webSearch.user и ID каталога
+WORDSTAT_API_KEY = os.getenv("WORDSTAT_API_KEY", "")
+YC_FOLDER_ID = os.getenv("YC_FOLDER_ID", "")
+WORDSTAT_REGIONS = os.getenv("WORDSTAT_REGIONS", "")          # через запятую, 225 — Россия; пусто — все регионы
+WORDSTAT_RPS = float(os.getenv("WORDSTAT_RPS", "3"))
+# базовые фразы: перед контент-планом раз в неделю собирается семантика по ним
+WORDSTAT_SEEDS = [x.strip() for x in (os.getenv("WORDSTAT_SEEDS") or "веб дизайн,ux ui дизайн,графический дизайн,figma,портфолио дизайнера,дизайнер интерфейсов,"
+    "нейросети для дизайнеров,работа дизайнером,курсы дизайна,айдентика").split(",") if x.strip()]
 
 # API сайта dsgners (docs/site-api.md): запись SEO-полей и письма авторам после «Ок» владельца
 SITE_API_URL = os.getenv("SITE_API_URL", "")      # напр. https://dsgners.ru/api/agents
