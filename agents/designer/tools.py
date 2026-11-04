@@ -76,6 +76,27 @@ def _safe_name(name: str) -> str:
 
 TOOLS += figma.tools()
 
+FEATURE_WORDS = ("на сайте", "на сайт", "фич", "онбординг", "обновлен", "запусти", "релиз", "раздел", "теперь можно",
+                 "новое на", "появил", "лента", "в профиле", "на проде", "функци")
+WITH_SCREENS = ("showcase", "showcase-phones", "promo", "promo-duo")
+
+
+def _feature_check(inp: dict, ctx: Ctx) -> list[str]:
+    """Жёсткая проверка: визуал про фичу сайта без экрана из Figma не сдаём."""
+    if not figma.tools() or inp["template"] in WITH_SCREENS:
+        return []
+    d = inp.get("data") or {}
+    if d.get("image") or d.get("images"):
+        return []
+    tp = ctx.job_dir / "task.md"
+    task = (tp.read_text("utf-8") if tp.exists() else "").lower() + " " + json.dumps(d, ensure_ascii=False).lower()
+    if not any(w in task for w in FEATURE_WORDS):
+        return []
+    return ["Это визуал про фичу/обновление сайта, а экрана нет. Найди экраны в Figma (figma_find в dev-файле, "
+            "figma_export 1–2 ключевых экрана; если в задаче уже есть пути к экранам — бери их) и собери promo / "
+            "promo-duo / showcase. Карточку без экрана можно сдать, только если в Figma правда ничего нет — "
+            "тогда напиши об этом в finish."]
+
 
 async def handle(name: str, inp: dict, ctx: Ctx):
     if name in figma.HANDLERS:
@@ -88,6 +109,7 @@ async def handle(name: str, inp: dict, ctx: Ctx):
         issues = await render(inp["template"], inp.get("data", {}), png)
         png.with_suffix(".json").write_text(json.dumps({"template": inp["template"], "data": inp.get("data", {})},
                                                        ensure_ascii=False), "utf-8")
+        issues += _feature_check(inp, ctx)
         text = ("Проблем нет." if not issues else "Найдены проблемы:\n- " + "\n- ".join(issues))
         return [{"type": "text", "text": f"Файл: {fname}\n{text}"}, image_block(png)]
 

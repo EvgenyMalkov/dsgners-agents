@@ -57,6 +57,9 @@ async def handle(name: str, inp: dict, ctx: Ctx):
             return [{"type": "text", "text": f"Текст {len(text)} симв. — больше лимита Telegram {TG_TEXT_LIMIT}. Сократи."}]
         if img and len(text) > TG_CAPTION_LIMIT:
             warn = " Текст длиннее подписи к фото (1024) — уйдёт отдельным сообщением после картинки."
+        if img and not (img.startswith(str(ctx.job_dir)) or any(img.endswith(f) for f in ctx.meta.get("from_colleagues", []))):
+            warn += (" ВНИМАНИЕ: картинка из прошлой задачи. Если владелец просил поправить картинку или визуал — "
+                     "закажи новую у дизайнера (ask_colleague) с его замечанием, старую не прикладывай.")
         posts = ctx.meta.setdefault("posts", [])
         posts.append({"channel": inp.get("channel", "").strip(), "text": text, "image": img})
         # читаемая версия для офиса
