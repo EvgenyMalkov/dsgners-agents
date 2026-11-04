@@ -14,7 +14,7 @@ from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (CallbackQuery, FSInputFile, InlineKeyboardButton, InlineKeyboardMarkup,
                            InputMediaPhoto, KeyboardButton, MenuButtonWebApp, Message,
-                           ReplyKeyboardMarkup, WebAppInfo)
+                           LinkPreviewOptions, ReplyKeyboardMarkup, WebAppInfo)
 
 from core import config, feedback, runner, spend
 from core.office import AGENTS, office
@@ -643,7 +643,7 @@ async def text_task(m: Message):
         return
     if uid in WAIT_OWN and not m.text.startswith("/"):
         fid, _ = WAIT_OWN.pop(uid)
-        await go_design(fid, m.text.strip(), m.answer)
+        await go_design(fid, tg_html.clean(m.html_text)[0], m.answer)   # html_text сохраняет твой жирный/курсив
         return
     if m.reply_to_message and not m.text.startswith("/"):
         hit = smm_flow.by_msg(m.reply_to_message.message_id)
@@ -673,6 +673,28 @@ IMG = (".png", ".jpg", ".jpeg", ".webp")
 
 # ---------- пост SMM: 3 текста → 3 картинки → готовый пост ----------
 from core import smm_flow  # noqa: E402
+from core import tg_html  # noqa: E402
+
+
+async def send_post(chat, text: str, img: str | None = None, head: str = "", reply_markup=None):
+    """Пост с HTML-форматированием (жирный, курсив, ссылки…). Картинка + подпись, если влезает в 1024 знака.
+    Если Telegram не принял разметку — отправляем тем же текстом без неё. Возвращает последнее сообщение."""
+    import html as _h
+    body = (_h.escape(head) if head else "") + text
+
+    async def _go(t: str, mode):
+        if img and Path(img).exists() and tg_html.visible_len(t) <= 1024:
+            return await BOT.send_photo(chat, FSInputFile(img), caption=t, parse_mode=mode, reply_markup=reply_markup)
+        if img and Path(img).exists():
+            await BOT.send_photo(chat, FSInputFile(img))
+        return await BOT.send_message(chat, t, parse_mode=mode, reply_markup=reply_markup,
+                                      link_preview_options=LinkPreviewOptions(is_disabled=bool(img)))
+    try:
+        return await _go(body, "HTML")
+    except Exception as e:
+        if "parse" not in str(e).lower() and "entit" not in str(e).lower():
+            raise
+        return await _go(tg_html.visible(body), None)
 
 
 async def send_variants(job: dict):
@@ -691,7 +713,7 @@ async def send_variants(job: dict):
         for k, text in meta["variants"].items():
             kb = InlineKeyboardMarkup(inline_keyboard=[[_b("✅ Беру этот", f"sv:{fid}:{k}"),
                                                         _b("✏️ Свой текст", f"se:{fid}:{k}")]])
-            sent = await BOT.send_message(uid, f"{smm_flow.STYLE_ICON[k]} {smm_flow.STYLES[k]}\n\n{text}", reply_markup=kb)
+            sent = await send_post(uid, text, head=f"{smm_flow.STYLE_ICON[k]} {smm_flow.STYLES[k]}\n\n", reply_markup=kb)
             msgs[str(sent.message_id)] = k
     smm_flow.update(fid, msgs=msgs)
 
@@ -763,12 +785,7 @@ async def send_final(fid: str):
     rows.append([_b("🖼 Другая картинка", f"sc:{fid}")])
     note = "" if ch else "\n\n(канал не задан — это готовый черновик, перешли его в нужный канал)"
     for uid in config.OWNER_IDS:
-        img, text = flow["image"], flow["text"]
-        if len(text) <= 1024:
-            await BOT.send_photo(uid, FSInputFile(img), caption=text)
-        else:
-            await BOT.send_photo(uid, FSInputFile(img))
-            await BOT.send_message(uid, text)
+        await send_post(uid, flow["text"], flow["image"])
         await BOT.send_message(uid, "✅ Готовый пост." + note, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
@@ -803,12 +820,7 @@ async def smm_cb(c: CallbackQuery):
             [_b(f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))]]))
     elif kind == "sp":
         try:
-            text, img = flow["text"], flow["image"]
-            if len(text) <= 1024:
-                await BOT.send_photo(flow["channel"], FSInputFile(img), caption=text)
-            else:
-                await BOT.send_photo(flow["channel"], FSInputFile(img))
-                await BOT.send_message(flow["channel"], text)
+            await send_post(flow["channel"], flow["text"], flow["image"])
             smm_flow.update(fid, published=time.time())
             await c.message.edit_reply_markup(reply_markup=None)
             await c.message.answer(f"🚀 Опубликовано в {flow['channel']}")
@@ -868,14 +880,7 @@ async def send_review(job: dict):
                 f"{k}: {f[k]}" for k in ("seo_title", "meta_description", "og_title") if f.get(k))
                 + (f"\nalt картинок: {len(f.get('images') or [])}; разметка: {'да' if f.get('jsonld') else 'нет'}"))
         for i, p in enumerate(posts, 1):
-            head = f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n"
-            img = p.get("image")
-            if img and Path(img).exists() and len(head + p["text"]) <= 1024:
-                sent = await BOT.send_photo(uid, FSInputFile(img), caption=head + p["text"])
-            else:
-                if img and Path(img).exists():
-                    MSG_JOB[(await BOT.send_photo(uid, FSInputFile(img))).message_id] = job["id"]
-                sent = await BOT.send_message(uid, head + p["text"][:3900])
+            sent = await send_post(uid, p["text"], p.get("image"), head=f"📝 Пост {i} → {p.get('channel') or 'черновик'}\n\n")
             MSG_JOB[sent.message_id] = job["id"]
         sent = await BOT.send_message(uid, f"{title}: {job['caption'][:3400]}\n\n💸 ${job['cost']:.3f}\n\n"
                                       "Правки — ответом на это сообщение или кнопкой «Переделать».", reply_markup=kb)
@@ -895,13 +900,7 @@ async def publish_posts(job: dict):
             results.append("черновик — не публиковал")
             continue
         try:
-            img = p.get("image")
-            if img and len(p["text"]) <= 1024:
-                await BOT.send_photo(ch, FSInputFile(img), caption=p["text"])
-            else:
-                if img:
-                    await BOT.send_photo(ch, FSInputFile(img))
-                await BOT.send_message(ch, p["text"])
+            await send_post(ch, p["text"], p.get("image"))
             results.append(f"{ch}: опубликовано")
             office.emit(job["agent"], "done", f"Опубликовано в {ch}", job["id"])
         except Exception as e:

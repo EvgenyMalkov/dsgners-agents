@@ -32,7 +32,7 @@ TOOLS = [
     {
         "name": "draft_post",
         "description": "Добавить пост в пакет на согласование. После «Ок» владельца он уйдёт в указанный канал. "
-                       "Текст — обычный, без Markdown-разметки (звёздочки и решётки не нужны), эмодзи — умеренно. "
+                       "Форматирование — HTML Telegram (<b>, <i>, <u>, <s>, <a href>, <blockquote>, <code>, <tg-spoiler>), не Markdown; эмодзи — умеренно. "
                        "Канал бери только из знаний (список каналов); если канала нет — оставь пустым, пост останется черновиком.",
         "input_schema": {"type": "object", "properties": {
             "channel": {"type": "string", "description": "@username канала или его числовой id; пусто — черновик"},
@@ -61,10 +61,15 @@ def _resolve_image(value: str) -> str | None:
 async def handle(name: str, inp: dict, ctx: Ctx):
     if name == "draft_variants":
         from core.smm_flow import STYLES
-        vs = {k: inp[k].strip() for k in STYLES if (inp.get(k) or "").strip()}
+        from core.tg_html import clean, visible_len
+        vs, notes = {}, []
+        for k in STYLES:
+            if (inp.get(k) or "").strip():
+                vs[k], errs = clean(inp[k])
+                notes += [f"{STYLES[k]}: {e}" for e in errs]
         if not vs:
             return [{"type": "text", "text": "Нужен хотя бы один вариант текста."}]
-        long = [STYLES[k] for k, v in vs.items() if len(v) > TG_CAPTION_LIMIT - 30]
+        long = [STYLES[k] for k, v in vs.items() if visible_len(v) > TG_CAPTION_LIMIT - 30]
         if long:
             return [{"type": "text", "text": f"Слишком длинно для подписи к картинке (лимит ~1000 знаков): "
                                              f"{', '.join(long)}. Сократи."}]
@@ -73,9 +78,11 @@ async def handle(name: str, inp: dict, ctx: Ctx):
                              "channel": (inp.get("channel") or "").strip(),
                              "shots": sorted(str(p) for p in ctx.job_dir.glob("figma-*.png"))}
         (ctx.job_dir / "variants.md").write_text("\n\n---\n\n".join(f"**{STYLES[k]}**\n\n{v}" for k, v in vs.items()), "utf-8")
-        return [{"type": "text", "text": f"Варианты сохранены ({', '.join(STYLES[k] for k in vs)}). Теперь finish."}]
+        fix = (" Поправил разметку: " + "; ".join(notes) + ". Если смысл форматирования пострадал — сдай заново.") if notes else ""
+        return [{"type": "text", "text": f"Варианты сохранены ({', '.join(STYLES[k] for k in vs)}).{fix} Теперь finish."}]
     if name == "draft_post":
-        text = inp["text"].strip()
+        from core.tg_html import clean
+        text, _ = clean(inp["text"])
         img = _resolve_image(inp.get("image", ""))
         if inp.get("image") and not img:
             return [{"type": "text", "text": f"Картинка «{inp['image']}» не найдена. Используй имя файла из ответа коллеги."}]
