@@ -62,6 +62,8 @@ SEO_TOPICS_PER_WEEK = int(os.getenv("SEO_TOPICS_PER_WEEK", "5"))   # тем в �
 SEO_AUTO_PLANS = os.getenv("SEO_AUTO_PLANS", "0") == "1"
 # Массовое оформление старых статей (/seo_bulk): модель (пусто — MODEL) и сколько статей в час
 SEO_BULK_MODEL = os.getenv("SEO_BULK_MODEL", "")
+# Раскладка базы постов по направлениям хабов (/hub_classify): дешёвая модель
+SEO_CLASSIFY_MODEL = os.getenv("SEO_CLASSIFY_MODEL", "claude-haiku-5-5")
 SEO_BULK_PER_HOUR = int(os.getenv("SEO_BULK_PER_HOUR", "40"))
 SEO_TZ = os.getenv("SEO_TZ", "Europe/Moscow")
 YANDEX_OAUTH_TOKEN = os.getenv("YANDEX_OAUTH_TOKEN", "")

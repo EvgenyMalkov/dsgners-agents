@@ -94,11 +94,20 @@ async def build() -> str:
           "если страница уже проверялась. Один пост может попасть в несколько подтем.", ""]
     hit_any = set()
     summary = []
+    try:
+        from core.seo import classify
+        llm = classify.results()
+    except Exception as e:
+        log.warning("classify: %s", e)
+        llm = {}
+    if llm:
+        md.insert(3, f"Плюс раскладка моделью по заголовку и описанию: разобрано {len(llm)} постов (/hub_classify).")
     for direction, subs in T.items():
         md += [f"## {direction}", "", "| Подтема | Постов у нас | Спрос, в месяц | Примеры |", "|---|---|---|---|"]
         for name, (phrase, pat) in subs.items():
             rx = re.compile(pat)
-            found = [p for p in posts if rx.search(p["text"])]
+            lab = f"{direction} / {name}"
+            found = [p for p in posts if rx.search(p["text"]) or lab in llm.get(p["url"], ())]
             hit_any.update(p["url"] for p in found)
             demand = ""
             if wordstat.enabled():

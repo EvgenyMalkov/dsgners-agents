@@ -559,6 +559,33 @@ async def hub_inventory(m: Message):
     asyncio.create_task(go())
 
 
+@dp.message(Command("hub_classify"))
+async def hub_classify(m: Message):
+    """Разложить всю базу постов по направлениям хабов моделью (один проход, продолжается с места остановки)."""
+    if not is_owner(m):
+        return
+    from core.seo import classify
+    if "status" in (m.text or ""):
+        await m.answer(classify.status())
+        return
+    await m.answer("Запустил раскладку базы: сначала читаю заголовки страниц (≈1–2 часа, со скоростью обхода), "
+                   "потом модель раскладывает посты по направлениям. Ход — /hub_classify status. "
+                   "В конце пришлю обновлённую инвентаризацию.")
+
+    async def say(t):
+        await m.answer(t)
+
+    async def go():
+        from core.seo import inventory
+        try:
+            await m.answer(await classify.run(say))
+            md = await inventory.build()
+            await m.answer_document(FSInputFile(md), caption="🗂 База под хабы — с раскладкой моделью. Перешли Claude")
+        except Exception as e:
+            await m.answer(f"Раскладка остановилась: {e}"[:1000])
+    asyncio.create_task(go())
+
+
 @dp.message(Command("article"))
 async def article(m: Message):
     if not is_owner(m):
@@ -662,6 +689,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("📈 Вордстат: фраза", "i:ws"), _b("🧲 Собрать семантику", "i:ws_parse")],
                 [_b("🗺 Карта спроса по разделам", "c:/ws_map"), _b("🧭 Хабы по темам сайта", "c:/ws_hubs")],
                 [_b("📊 Посещаемость тем", "c:/topics_traffic"), _b("🗂 База под хабы", "c:/hub_inventory")],
+                [_b("🤖 Разложить базу моделью", "c:/hub_classify"), _b("Ход раскладки", "c:/hub_classify status")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
@@ -694,7 +722,7 @@ HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLS
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify"}
 
 
 async def run_cmd(m: Message, user, text: str):
