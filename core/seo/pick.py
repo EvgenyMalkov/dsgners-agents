@@ -17,7 +17,9 @@ from core.seo import apis, inventory, page, store
 log = logging.getLogger("seo.pick")
 BATCH = 60
 
-# ключ → (направление, подтема в inventory.T, адрес, [(H2, что сюда подходит)])
+# ключ → (направление, подтема в inventory.T, адрес, [(H2, что сюда подходит)]); BRAND_WORD — как ищут бренд в этой подтеме
+BRAND_WORD = {"branding": "брендинг", "logo": "логотип", "rebrending": "ребрендинг", "firmennyj-stil": "фирменный стиль",
+              "aydentika": "айдентика", "brendbuk": "брендбук", "upakovka": "упаковка"}
 SUBPAGES = {
     "branding": ("Брендинг", "Брендинг (общее)", "/education/branding", [
         ("Что такое брендинг простыми словами", "объяснения, что такое брендинг, виды, архетипы, отличие от айдентики и маркетинга"),
@@ -84,6 +86,7 @@ TOOL = {
             "i": {"type": "integer"},
             "block": {"type": "integer", "description": "номер блока из списка; -1 — никуда"},
             "score": {"type": "integer", "description": "1 — слабо, 2 — хорошо, 3 — точно про этот блок"},
+            "brand": {"type": "string", "description": "известный бренд/компания, о котором статья (как его ищут: «Т-Банк», «Пятёрочка»); пусто, если нет"},
         }, "required": ["i", "block", "score"]}}}, "required": ["items"]},
 }
 
@@ -103,7 +106,8 @@ def _items(out) -> list[dict]:
             except ValueError:
                 continue
         if isinstance(it, dict) and isinstance(it.get("i"), int) and isinstance(it.get("block"), int):
-            res.append({"i": it["i"], "block": it["block"], "score": int(it.get("score") or 1)})
+            res.append({"i": it["i"], "block": it["block"], "score": int(it.get("score") or 1),
+                        "brand": str(it.get("brand") or "").strip()[:40]})
     return res
 
 
@@ -126,12 +130,18 @@ async def build(key: str) -> str:
     posts = _subtopic_posts(direction, sub)
     meta = {r["url"]: (r["title"] or "", r["description"] or "") for r in store.db().execute(
         "SELECT url, title, description FROM urls")}
-    org = {}
+    org, views = {}, {}
+    end = dt.date.today() - dt.timedelta(days=1)
     try:
-        end = dt.date.today() - dt.timedelta(days=1)
         org = {page.norm(u): v for u, v in (await apis.organic_by_page(end - dt.timedelta(days=27), end, 20000) or {}).items()}
     except Exception as e:
         log.warning("метрика: %s", e)
+    try:
+        from core.seo import demand_map
+        views = await demand_map._metrika("ym:pv:pageviews", "ym:pv:URLPath", end - dt.timedelta(days=89), end)
+    except Exception as e:
+        log.warning("метрика, просмотры: %s", e)
+    lastmod = {r["url"]: (r["lastmod"] or "")[:10] for r in store.db().execute("SELECT url, lastmod FROM urls")}
     system = (f"Ты собираешь подборки для страницы «{sub}» на дизайн-платформе дизайнерс ({path}). Для каждой статьи выбери "
               "ОДИН блок, куда она подходит лучше всего, или -1. Ставь -1 дайджестам новостей за неделю/месяц, анонсам, "
               "вакансиям и статьям, которые на самом деле не про эту подтему. Силу совпадения ставь честно.\nБлоки:\n"
@@ -162,8 +172,30 @@ async def build(key: str) -> str:
                 skipped += 1
                 continue
             p = chunk[i]
+            path_ = "/" + p["url"].split("/", 3)[-1].split("?")[0].rstrip("/")
             picked[b].append({"url": p["url"], "title": meta.get(p["url"], ("", ""))[0] or p["title"],
-                              "score": max(1, min(3, it["score"])), "visits": org.get(page.norm(p["url"]), 0)})
+                              "score": max(1, min(3, it["score"])), "visits": org.get(page.norm(p["url"]), 0),
+                              "views": int(views.get(path_, 0)), "date": lastmod.get(p["url"], ""), "brand": it["brand"]})
+    # спрос на бренд из статьи: «ребрендинг т-банк», «логотип пятёрочка» (Вордстат, до 80 запросов, кешируется)
+    from core.seo import wordstat
+    word = BRAND_WORD.get(key, "")
+    brand_demand: dict[str, int] = {}
+    if wordstat.enabled() and word:
+        brands = sorted({r["brand"].lower() for rows in picked.values() for r in rows if r["brand"] and r["score"] >= 2})[:80]
+        for b in brands:
+            try:
+                brand_demand[b] = (await wordstat.top(f"{word} {b}", 1, save=False))["total"]
+            except Exception as e:
+                log.warning("вордстат %s: %s", b, e)
+    import math
+    cutoff = (dt.date.today() - dt.timedelta(days=183)).isoformat()
+    for rows in picked.values():
+        for r in rows:
+            r["demand"] = brand_demand.get(r["brand"].lower(), 0) if r["brand"] else 0
+            r["fresh"] = bool(r["date"]) and r["date"] >= cutoff
+            # сила совпадения важнее всего; дальше — что уже работает и что может заработать
+            r["rank"] = (r["score"] * 3 + math.log10(1 + r["visits"] * 30) + math.log10(1 + r["views"])
+                         + math.log10(1 + r["demand"]) + (1.5 if r["fresh"] else 0))
     # авторы и студии подтемы
     authors: dict[str, int] = {}
     for p in posts:
@@ -175,17 +207,22 @@ async def build(key: str) -> str:
     md = [f"# Подборки для {path} — {today:%d.%m.%Y}", "",
           f"Статей в подтеме «{sub}»: {len(posts)}. Модель разложила их по блокам страницы (одна статья — один блок), "
           f"никуда не подошло: {len(posts) - sum(len(v) for v in picked.values())}. "
-          "Внутри блока — по силе совпадения (★) и визитам из поиска за 28 дней. На страницу идут первые 3–9; "
+          "Внутри блока — по силе совпадения (★) и потенциалу: визиты из поиска за 28 дней, просмотры на сайте за 90 дней, "
+          "спрос на бренд из статьи в Вордстате («ребрендинг [бренд]»), свежесть (до 6 месяцев — 🆕). На страницу идут первые 3–9; "
           "блок, где меньше 3 статей с ★★ и выше, не показываем.", ""]
     result = {}
     for j, (h, _) in enumerate(blocks):
-        rows = sorted(picked[j], key=lambda r: (-r["score"], -r["visits"]))
+        rows = sorted(picked[j], key=lambda r: -r["rank"])
         strong = [r for r in rows if r["score"] >= 2]
         result[h] = [r["url"] for r in strong[:9]]
         md += [f"## {h}", "", f"Подходит: {len(rows)}, из них уверенно (★★ и выше): {len(strong)}"
                + ("" if len(strong) >= 3 else " — мало, блок пока не показываем"), ""]
-        md += [f"{n}. {'★' * r['score']} {r['title']} — {r['visits']} визитов — {r['url'].replace(site, '')}"
-               for n, r in enumerate(rows[:12], 1)]
+        for n, r in enumerate(rows[:12], 1):
+            bits = [f"поиск {r['visits']}", f"просмотры {r['views']}"]
+            if r["demand"]:
+                bits.append(f"спрос «{word} {r['brand']}» {r['demand']}/мес")
+            md.append(f"{n}. {'★' * r['score']}{' 🆕' if r['fresh'] else ''} {r['title']} — {', '.join(bits)}"
+                      f"{' — ' + r['date'] if r['date'] else ''} — {r['url'].replace(site, '')}")
         md.append("")
     md += ["## Кто делает (авторы и студии по числу статей в подтеме)", ""]
     md += [f"- {a} — {c}" for a, c in sorted(authors.items(), key=lambda kv: -kv[1])[:10]]
