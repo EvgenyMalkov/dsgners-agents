@@ -22,7 +22,7 @@
 {
   "id": 12366,
   "author": "na_produkte",
-  "seo": { "seo_title": "", "meta_description": "", "og_title": "", "og_description": "", "jsonld": "" },
+  "seo": { "seo_title": "", "meta_description": "", "jsonld": "" },
   "images": [ {"src": "https://dsgners.ru/upload/…/1.jpg", "alt": ""} ]
 }
 ```
@@ -35,13 +35,11 @@
 {
   "seo_title": "…",
   "meta_description": "…",
-  "og_title": "…",
-  "og_description": "…",
   "jsonld": "{\"@context\":\"https://schema.org\", …}",
   "images": [ {"src": "https://dsgners.ru/upload/…/1.jpg", "alt": "…"} ]
 }
 ```
-- Все поля необязательные: что пришло — обновить, остальное не трогать.
+- Все поля необязательные: что пришло — обновить, остальное не трогать. og:title и og:description сайт берёт из SEO title и description — отдельных полей нет.
 - Если у статьи нет отдельных полей под SEO title / description / OG — выводить их в `<head>` статьи из того,
   что пришло (можно хранить в одном JSON-поле статьи). `jsonld` — в `<script type="application/ld+json">`.
 - `images` — только `alt` у картинок этой статьи с таким `src`.

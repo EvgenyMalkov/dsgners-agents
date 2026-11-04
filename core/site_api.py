@@ -41,7 +41,8 @@ async def get_article(url: str) -> dict:
     return await _call("GET", "/article", params={"url": url})
 
 
-SEO_KEYS = ("seo_title", "meta_description", "og_title", "og_description", "jsonld", "images")
+# OG отдельно не пишем: сайт берёт og:title/og:description из SEO title и description (решено с разработкой 04.11)
+SEO_KEYS = ("seo_title", "meta_description", "jsonld", "images")
 
 
 async def update_seo(article_id, fields: dict) -> dict:
