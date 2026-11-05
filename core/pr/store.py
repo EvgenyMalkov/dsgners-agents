@@ -51,7 +51,8 @@ def db() -> sqlite3.Connection:
         CREATE TABLE IF NOT EXISTS stoplist(key TEXT PRIMARY KEY, reason TEXT, ts REAL);
         """)
         cols = {r[1] for r in _db.execute("PRAGMA table_info(articles)")}
-        for col, ddl in (("match", "TEXT DEFAULT ''"), ("dsg_slug", "TEXT DEFAULT ''"), ("links", "TEXT DEFAULT '[]'"), ("excerpt", "TEXT DEFAULT ''")):
+        for col, ddl in (("match", "TEXT DEFAULT ''"), ("dsg_slug", "TEXT DEFAULT ''"), ("links", "TEXT DEFAULT '[]'"), ("excerpt", "TEXT DEFAULT ''"),
+                          ("track", "TEXT DEFAULT 'author'"), ("author_score", "REAL")):
             if col not in cols:
                 _db.execute(f"ALTER TABLE articles ADD COLUMN {col} {ddl}")
         if not _db.execute("SELECT COUNT(*) FROM sources").fetchone()[0]:
@@ -144,9 +145,19 @@ def by_stage(stage: str, limit: int = 1000) -> list[dict]:
     return [_row(r) for r in db().execute("SELECT * FROM articles WHERE stage=? ORDER BY found LIMIT ?", (stage, limit))]
 
 
-def digest_candidates(min_total: float, limit: int) -> list[dict]:
+def digest_candidates(min_total: float, limit: int, track: str = "author") -> list[dict]:
     return [_row(r) for r in db().execute(
-        "SELECT * FROM articles WHERE stage='scored' AND total>=? ORDER BY total DESC LIMIT ?", (min_total, limit))]
+        "SELECT * FROM articles WHERE stage='scored' AND total>=? AND coalesce(track,'author')=? ORDER BY total DESC LIMIT ?",
+        (min_total, track, limit))]
+
+
+def author_history(author_url: str, min_total: float, exclude_id: int = 0) -> tuple[int, int]:
+    """(статей этого автора у нас в базе, из них с итогом ≥ порога) — кроме текущей."""
+    if not author_url:
+        return 0, 0
+    r = db().execute("SELECT COUNT(*), SUM(CASE WHEN total>=? THEN 1 ELSE 0 END) FROM articles "
+                     "WHERE author_url=? AND id!=? AND stage IN ('scored','sent')", (min_total, author_url, exclude_id)).fetchone()
+    return r[0] or 0, r[1] or 0
 
 
 def best_below(min_total: float) -> dict | None:

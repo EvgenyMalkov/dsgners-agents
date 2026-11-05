@@ -26,6 +26,8 @@ PITCH = [x.strip() for x in (config.env("PR_PITCH", "") or
          "похожие статьи у нас собирают больше охватов|"
          "узкая аудитория — только дизайнеры, без случайных читателей|"
          "мы сами продвигаем статьи в своих медиа — это больше 100 каналов").split("|") if x.strip()]
+# Для блогов компаний — свои доводы (через «|»); по умолчанию те же, что для авторов
+PITCH_COMPANY = [x.strip() for x in (config.env("PR_PITCH_COMPANY", "")).split("|") if x.strip()] or PITCH
 EMOJI = ["👋", "🙌", "✌️", "😊", "🙂", "🤝", "👀", "✨"]
 OPENERS = ["сразу с того, что зацепило в статье", "с короткого «наткнулись на вашу статью»",
            "с вопроса-комплимента про конкретный момент статьи", "с того, кто пишет, и сразу к статье",
@@ -74,7 +76,8 @@ def _bad_numbers(text: str, allowed: str) -> list[str]:
 async def draft(a: dict, match: str, comment: str = "", previous: str = "") -> dict:
     """a — статья из pr.db. match: none (новый автор) | sure/maybe (уже есть профиль на дизайнерс)."""
     recent = store.recent_texts(15)
-    pitch = PITCH[:]
+    company = a.get("track") == "company"
+    pitch = (PITCH_COMPANY if company else PITCH)[:]
     random.shuffle(pitch)
     emoji = random.choice(EMOJI)
     opener = random.choice(OPENERS)
@@ -85,7 +88,12 @@ async def draft(a: dict, match: str, comment: str = "", previous: str = "") -> d
             f"Смайл приветствия: {emoji}",
             f"Заход: {opener}",
             "Доводы, чем полезен дизайнерс (в этом порядке, своими словами):\n" + "\n".join(f"- {p}" for p in pitch)]
-    if match in ("sure", "maybe"):
+    if company:
+        task.append("Это блог компании, а не личный автор. Обращайся к тому, кто ведёт блог/PR компании — по имени, "
+                    "если статья подписана человеком, иначе нейтрально («Здравствуйте» + смайл). Тон чуть деловее, "
+                    "на «вы». Предложи публиковать кейсы и статьи компании на дизайнерс. Никаких условий сотрудничества, "
+                    "цен, рекламных форматов и обещаний — их обсудит основатель, если компания ответит.")
+    elif match in ("sure", "maybe"):
         task.append("У автора уже есть профиль на дизайнерс — скажи об этом тепло: этот текст отлично зашёл бы и у нас.")
     if a.get("excerpt"):
         task.append(f"Начало статьи (для конкретной детали):\n{a['excerpt'][:3500]}")

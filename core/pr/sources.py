@@ -26,6 +26,7 @@ DELAY = float(config.env("PR_DELAY", "2.5"))
 HABR_API = config.env("PR_HABR_API", "https://habr.com/kek/v2/articles/{id}/?fl=ru&hl=ru")
 HABR_USER_API = config.env("PR_HABR_USER_API", "https://habr.com/kek/v2/users/{alias}/card?fl=ru&hl=ru")
 VC_API = config.env("PR_VC_API", "https://api.vc.ru/v2.31/content?id={id}")
+VC_SUBSITE = config.env("PR_VC_SUBSITE_API", "https://api.vc.ru/v2.31/subsite?id={id}")
 
 _last_hit: dict[str, float] = {}
 _lock = asyncio.Lock()
@@ -272,6 +273,14 @@ async def vc_article(s: aiohttp.ClientSession, item: Item) -> Article:
                    "views": _num(c.get("views") or c.get("hits"))}
         a.author_stats = {"followers": _num(deep(au, "subscribersCount", "followersCount")),
                           "posts": _num(deep(au, "entriesCount", "entries"))}
+        if a.author_id and not any(a.author_stats.values()):
+            try:   # профиль автора/компании: подписчики и число статей
+                sj = await fetch(s, VC_SUBSITE.format(id=a.author_id), want_json=True)
+                sj = sj.get("result") or sj
+                a.author_stats = {"followers": _num(deep(sj, "subscribersCount", "followersCount", "subscribers")),
+                                  "posts": _num(deep(sj, "entriesCount", "entries", "postsCount"))}
+            except Exception as ex:
+                log.info("vc subsite %s: %s", a.author_id, ex)
         if not a.text:
             await _from_page(s, a)
     except Exception as ex:

@@ -21,7 +21,8 @@ log = logging.getLogger("pr.score")
 MODEL = config.env("PR_MODEL", "") or config.SEO_CLASSIFY_MODEL or config.MODEL
 MIN_CHARS = int(config.env("PR_MIN_CHARS", "5000"))
 MIN_IMAGES = int(config.env("PR_MIN_IMAGES", "5"))
-W_AI = float(config.env("PR_WEIGHT_AI", "0.7"))
+W_AI = float(config.env("PR_WEIGHT_AI", "0.6"))
+W_AUTHOR = float(config.env("PR_WEIGHT_AUTHOR", "0.2"))      # остальное — сигналы площадки
 MIN_DESIGN_DENSITY = float(config.env("PR_MIN_DESIGN_DENSITY", "8"))   # дизайн-слов на 10 000 знаков
 
 DESIGN_WORDS = re.compile(
@@ -34,14 +35,12 @@ AD_WORDS = re.compile(
 
 def filter_reason(a: Article, kind: str) -> str:
     """Почему статья отсеяна на слое 1, или '' — прошла."""
-    if a.corporate:
-        return "блог компании"
     if a.translation:
         return "перевод"
     if len(a.text) < MIN_CHARS and a.images < MIN_IMAGES:
         return "короткая"
-    if len(AD_WORDS.findall(a.text)) >= 2:
-        return "реклама"
+    if not a.corporate and len(AD_WORDS.findall(a.text)) >= 2:
+        return "реклама"        # у компаний продающие абзацы — норма, их не отсеиваем
     if kind != "habr" and not DESIGN_WORDS.search(f"{a.title}\n{a.text[:3000]}"):
         return "не про дизайн"       # общие ленты (vc) — в начале текста должно быть про дизайн
     # в хабы дизайна часто попадают статьи разработчиков: проверяем, сколько текста про дизайн
@@ -80,7 +79,7 @@ SYSTEM = """Ты — редактор платформы дизайнерс (dsg
 2. position — своя позиция: автор спорит, делает выводы, а не собирает «10 советов».
 3. specifics — конкретика: цифры, процесс, скрины, до/после.
 4. useful — польза дизайнеру: коллега узнает новое или задумается.
-5. no_ads — без рекламы: текст не ведёт к продаже курса, услуги, сервиса (2 — рекламы нет).
+5. no_ads — без рекламы: текст не ведёт к продаже курса, услуги, сервиса (2 — рекламы нет). Для блога компании оценивай иначе: 2 — полезный материал, где продукт или студия — фон; 0 — текст целиком продающий.
 
 Ещё определи:
 - author_kind: person — пишет конкретный человек от себя (дизайнер студии от своего имени — тоже person); company — блог компании, студии, сервиса; school — онлайн-школа или курсы;
@@ -92,6 +91,8 @@ SYSTEM = """Ты — редактор платформы дизайнерс (dsg
 - design: true только если design_focus = 2;
 - type: кейс | мнение | гайд | новость | интервью | другое;
 - why: одна фраза до 140 знаков для владельца — чем статья сильная или слабая, конкретно про эту статью, без общих слов.
+
+Блоги компаний нам тоже интересны (особенно студии, агентства и продуктовые компании с дизайн-кейсами) — оценивай их по той же рубрике, author_kind укажи честно.
 
 Оценивай строго: 8–10 — редкие тексты, которые хочется переслать коллеге. Гайды-пересказы и SEO-тексты — низко."""
 
@@ -156,5 +157,24 @@ async def ai_rate(a: Article) -> dict:
     return out
 
 
-def total(ai: float, sig: float) -> float:
-    return round(W_AI * ai + (1 - W_AI) * sig, 1)
+def author_score(stats: dict, history: tuple[int, int] = (0, 0)) -> float | None:
+    """Вес автора по профилю, 0–10. None — площадка ничего не отдала.
+    ~8: 30 публикаций, карма 60, 2 тыс. подписчиков; ~5: 5 публикаций и пара сотен подписчиков;
+    плюс до 2 баллов за его сильные статьи, которые мы уже видели.
+    history — (статей автора у нас в базе, из них с итогом ≥ порога)."""
+    st = stats or {}
+    posts, karma, rating, foll = (st.get(k, 0) or 0 for k in ("posts", "karma", "rating", "followers"))
+    if not any((posts, karma, rating, foll)):
+        return None
+    s = (1.4 * _lg(posts)                 # 31 публикация → 7
+         + 0.7 * _lg(karma)               # карма 63 → 4.2
+         + 0.3 * _lg(rating)
+         + 0.7 * _lg(foll / 10))          # 2 тыс. подписчиков → 5.4
+    s = s * 0.5 + min(2.0, history[1] * 1.0)
+    return round(min(10.0, s), 1)
+
+
+def total(ai: float, sig: float, auth: float | None = None) -> float:
+    if auth is None:
+        return round(W_AI / (W_AI + (1 - W_AI - W_AUTHOR)) * ai + (1 - W_AI - W_AUTHOR) / (W_AI + (1 - W_AI - W_AUTHOR)) * sig, 1)
+    return round(W_AI * ai + W_AUTHOR * auth + (1 - W_AI - W_AUTHOR) * sig, 1)

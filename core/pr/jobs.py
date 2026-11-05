@@ -21,6 +21,7 @@ log = logging.getLogger("pr.jobs")
 ENABLED = config.env("PR_ENABLED", "1") == "1"
 MIN_SCORE = float(config.env("PR_MIN_SCORE", "7"))
 DIGEST_MAX = int(config.env("PR_DIGEST_MAX", "10"))
+DIGEST_COMPANIES = int(config.env("PR_DIGEST_COMPANIES", "5"))   # отдельно — блоги компаний
 MAX_AGE_DAYS = float(config.env("PR_MAX_AGE_DAYS", "7"))
 PER_RUN = int(config.env("PR_PER_RUN", "120"))          # статей разобрать за один сбор
 AI_PER_RUN = int(config.env("PR_AI_PER_RUN", "60"))     # из них оценить Claude
@@ -93,15 +94,15 @@ async def _rate_one(s, row: dict, kind: str, use_ai: bool = True) -> str:
     if not use_ai:
         return "new"
     r = await score.ai_rate(a)
-    if r.get("author_kind") in ("company", "school"):
-        store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r,
-                             reason="блог компании (Claude)" if r["author_kind"] == "company" else "школа (Claude)")
-        return "rejected"
+    track = "company" if a.corporate or r.get("author_kind") in ("company", "school") else "author"
+    hist = store.author_history(a.author_url, MIN_SCORE, row["id"])
+    auth = score.author_score(a.author_stats, hist)
+    store.update_article(row["id"], track=track, author_score=auth)
     if r.get("design_focus", 2) < 2 or not r.get("design", True):
         store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r,
                              reason="дизайн — побочная тема (Claude)" if r.get("design_focus") == 1 else "не про дизайн (Claude)")
         return "rejected"
-    store.update_article(row["id"], stage="scored", ai=r["score"], ai_json=r, total=score.total(r["score"], sig))
+    store.update_article(row["id"], stage="scored", ai=r["score"], ai_json=r, total=score.total(r["score"], sig, auth))
     return "scored"
 
 
@@ -131,6 +132,8 @@ async def scan() -> str:
 
         # оценки по старой рубрике (без design_focus) — переоценить
         store.db().execute("UPDATE articles SET stage='new' WHERE stage='scored' AND ai_json NOT LIKE '%design_focus%'")
+        store.db().execute("UPDATE articles SET stage='new', reason='' WHERE stage='rejected' AND found>? AND reason IN "
+                           "('блог компании','блог компании (Claude)','школа (Claude)')", (time.time() - MAX_AGE_DAYS * 86400,))
         store.db().commit()
         rated = rejected = errors = 0
         budget_stop = False
@@ -222,7 +225,9 @@ def _contact_line(c: dict) -> str:
 def card(r: dict) -> str:
     ai = r.get("ai_json") or {}
     st = r.get("stats") or {}
-    tag = {"none": "🆕 Новый автор", "sure": f"💤 Есть на дизайнерс: dsgners.ru/{r.get('dsg_slug')}",
+    company = r.get("track") == "company"
+    tag = "🏢 Компания" if company else ""
+    tag = tag or {"none": "🆕 Новый автор", "sure": f"💤 Есть на дизайнерс: dsgners.ru/{r.get('dsg_slug')}",
            "maybe": f"❔ Возможно, есть на дизайнерс: dsgners.ru/{r.get('dsg_slug')}"}.get(r.get("match") or "", "")
     lines = [f"⭐ {r['total']} · {SITE_NAME.get(r['site'], r['site'])} · {_ago(r['published'])}"
              + (f" · {ai['type']}" if ai.get("type") else "")]
@@ -231,12 +236,25 @@ def card(r: dict) -> str:
     lines += [r["title"], r["url"]]
     if r.get("author"):
         lines.append(f"Автор: {r['author']}" + (f" — {r['author_url']}" if r.get("author_url") else ""))
+    au = r.get("author_stats") or {}
+    prof = " · ".join(x for x in (f"{int(au['posts'])} публ." if au.get("posts") else "",
+                                  f"карма {int(au['karma'])}" if au.get("karma") else "",
+                                  f"рейтинг {int(au['rating'])}" if au.get("rating") else "",
+                                  f"{_k(au['followers'])} подписч." if au.get("followers") else "") if x)
+    hist = store.author_history(r.get("author_url") or "", MIN_SCORE, r["id"])
+    if hist[0]:
+        prof += (" · " if prof else "") + f"у нас в базе ещё {hist[0]}, сильных {hist[1]}"
+    if prof or r.get("author_score") is not None:
+        lines.append(f"Профиль: {prof or 'нет данных'}"
+                     + (f" → {r['author_score']:.1f}/10" if r.get("author_score") is not None else ""))
     if ai.get("why"):
         lines.append(f"Почему: {ai['why']}")
     nums = " ".join(x for x in (f"🔖{_k(st.get('favorites'))}" if st.get("favorites") else "",
                                 f"💬{_k(st.get('comments'))}" if st.get("comments") else "",
                                 f"👁{_k(st.get('views'))}" if st.get("views") else "") if x)
-    lines.append(f"Claude {r['ai']:.0f}/10 · площадка {r['signal']:.1f}/10" + (f" · {nums}" if nums else ""))
+    lines.append(f"Claude {r['ai']:.0f}/10 · площадка {r['signal']:.1f}/10"
+                 + (f" · автор {r['author_score']:.1f}/10" if r.get("author_score") is not None else "")
+                 + (f" · {nums}" if nums else ""))
     cs = store.contacts_for(r["id"])
     if cs:
         lines.append("\nКонтакты:")
@@ -270,22 +288,23 @@ async def digest() -> str:
     c = store.counts_since(since)
     reasons = ", ".join(f"{r} {n}" for r, n in store.reasons_since(since)[:5])
     up, down = store.votes_total()
-    rows = []
-    for r in store.digest_candidates(MIN_SCORE, DIGEST_MAX * 2):
-        if len(rows) >= DIGEST_MAX:
-            break
-        p = await prepare(r)
-        if p:
-            rows.append(p)
+    rows, comps = [], []
+    for track, lim, acc in (("author", DIGEST_MAX, rows), ("company", DIGEST_COMPANIES, comps)):
+        for r in store.digest_candidates(MIN_SCORE, lim * 2, track):
+            if len(acc) >= lim:
+                break
+            p = await prepare(r)
+            if p:
+                acc.append(p)
     head = (f"🤝 PR · дайджест на {_now():%d.%m}\n"
             f"За сутки найдено {c['found']}, отсеяно {c['rejected']}" + (f" ({reasons})" if reasons else "")
-            + f", оценено {c['scored'] + c['sent']}. В подборке: {len(rows)}.")
+            + f", оценено {c['scored'] + c['sent']}. В подборке: авторов {len(rows)}, компаний {len(comps)}.")
     if outreach_on():
         head += f"\nОтправка: {sender_line()}"
     if up + down < 30:
         head += ("\n\nИдёт калибровка: отметь каждую карточку 👍 или 👎 — по отметкам подстрою оценку. "
                  f"Отмечено пока {up + down}.")
-    if not rows:
+    if not rows and not comps:
         best = store.best_below(MIN_SCORE)
         head += f"\n\nВыше порога {MIN_SCORE:g} ничего нет."
         if best:
@@ -298,12 +317,16 @@ async def digest() -> str:
             store.update_article(best["id"], stage="sent", sent=time.time())
         return "пусто" + (", показал лучшую ниже порога" if best else "")
     await say(head)
-    for r in rows:
-        await say(card(r), r["id"])
-        store.update_article(r["id"], stage="sent", sent=time.time())
-        await asyncio.sleep(0.4)
-    drafts = sum(1 for r in rows if store.outreach_for_article(r["id"]))
-    return f"карточек {len(rows)}, с черновиком {drafts}"
+    for title, group in (("👤 Авторы", rows), ("🏢 Компании", comps)):
+        if not group:
+            continue
+        await say(f"{title} — {len(group)}")
+        for r in group:
+            await say(card(r), r["id"])
+            store.update_article(r["id"], stage="sent", sent=time.time())
+            await asyncio.sleep(0.4)
+    drafts = sum(1 for r in rows + comps if store.outreach_for_article(r["id"]))
+    return f"авторов {len(rows)}, компаний {len(comps)}, с черновиком {drafts}"
 
 
 def sender_line() -> str:
