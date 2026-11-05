@@ -57,7 +57,7 @@ TOOLS = [
     },
     {
         "name": "inspect_page",
-        "description": "Посмотреть прототип или страницу для ролика: карта элементов (селекторы, координаты, подписи кнопок) "
+        "description": "Посмотреть HTML-прототип или страницу сайта для ролика (для экранов из Figma не нужен): карта элементов (селекторы, координаты, подписи кнопок) "
                        "на мобильной ширине 375 + скриншот первого экрана. Нужен перед render_motion, чтобы написать "
                        "сценарий нажатий. Можно передать css/js, чтобы сразу проверить, как страница выглядит после правок.",
         "input_schema": {"type": "object", "properties": {
@@ -71,7 +71,12 @@ TOOLS = [
                        "«Ролики и анимации» (use_skill). Возвращает лист из 6 кадров и замечания (пусто = чисто).",
         "input_schema": {"type": "object", "properties": {
             "name": {"type": "string", "description": "имя файла латиницей"},
-            "source": {"type": "string", "description": "HTML-прототип (путь) или адрес страницы"},
+            "source": {"type": "string", "description": "HTML-прототип (путь) или адрес страницы — если фича интерактивная"},
+            "screens": {"type": "array", "items": {"type": "string"}, "description": "ИЛИ экраны из Figma (пути PNG из figma_export, "
+                        "full: true для длинных): прокрутка ленты/страницы, переходы между экранами. Ширина экрана — 375"},
+            "fixed_top": {"type": "integer", "description": "для screens: сколько px сверху экрана закрепить при прокрутке (шапка, обычно 64)"},
+            "overlays": {"type": "array", "description": "для screens: закреплённые элементы поверх (навбар снизу и т.п.) — "
+                         "[{image: путь PNG из figma_export, pos: bottom|top, offset: px, width: px в CSS}]", "items": {"type": "object"}},
             "format": {"type": "string", "enum": ["4:5", "1:1", "9:16", "16:9"], "description": "по умолчанию 4:5 (Telegram)"},
             "theme": {"type": "string", "enum": ["light", "dark"]},
             "header": {"type": "boolean", "description": "вставить реальную мобильную шапку сайта (для прототипов по умолчанию да)"},
@@ -89,10 +94,11 @@ TOOLS = [
             "caption_pos": {"type": "string", "enum": ["auto", "top", "bottom", "none"]},
             "palette": {"type": "string", "description": "цвет подложки из брендбука: violet, blue, pink, lime, green, cyan, orange, red, yellow"},
             "motifs": {"type": "array", "items": {"type": "string"}, "description": "шейпы бренда на подложке (2–4)"},
-            "steps": {"type": "array", "description": "сценарий: {tap: селектор} | {wait: сек} | {scroll_to: селектор, dur: сек} | {js: код}",
+            "steps": {"type": "array", "description": "сценарий: {tap: селектор} | {tap_at: [x, y]} | {wait: сек} | {scroll_by: px, dur: сек} | "
+                      "{scroll_to: селектор, dur} | {screen: номер, transition: slide|fade, dur} | {js: код}",
                       "items": {"type": "object"}},
             "loop": {"type": "boolean", "description": "проверять бесшовный цикл (по умолчанию да)"},
-        }, "required": ["name", "source", "steps"]},
+        }, "required": ["name", "steps"]},
     },
     {
         "name": "finish",

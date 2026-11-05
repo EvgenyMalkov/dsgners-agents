@@ -78,6 +78,42 @@ html{scrollbar-width:none}::-webkit-scrollbar{display:none}
 """
 
 
+def screens_page(spec: dict, work: Path) -> Path:
+    """Экраны из Figma (PNG) → страница для записи: прокрутка, смена экранов, закреплённые шапка/навбар.
+    Ширина экрана в CSS — 375 (картинка 2x/3x ужимается — чётко)."""
+    from core.render import _image_src
+    imgs = [_image_src(s) for s in spec["screens"]][:8]
+    ft = int(spec.get("fixed_top") or 0)
+    ov = []
+    for o in (spec.get("overlays") or [])[:4]:
+        pos = "bottom" if o.get("pos") == "bottom" else "top"
+        off = int(o.get("offset", 24 if pos == "bottom" else 0))
+        w = int(o.get("width") or 375)
+        ov.append(f'<img class="dsg-ov" src="{_image_src(o["image"])}" style="{pos}:{off}px;width:{w}px">')
+    scr = "".join(f'<div class="dsg-scr" data-i="{i}" style="{"" if i == 0 else "display:none"}"><img src="{s}">'
+                  + (f'<div class="dsg-fix" style="height:{ft}px;background-image:url({s})"></div>' if ft else "")
+                  + "</div>" for i, s in enumerate(imgs))
+    html = f"""<!doctype html><html><head><meta charset=utf-8><style>
+html,body{{margin:0;background:{spec.get("page_bg") or "#F2F3F7"};scrollbar-width:none}}::-webkit-scrollbar{{display:none}}
+.dsg-scr img{{width:375px;display:block}}
+.dsg-fix{{position:fixed;top:0;left:0;width:375px;background-size:375px auto;background-position:top center;z-index:40}}
+.dsg-ov{{position:fixed;left:0;right:0;margin:0 auto;z-index:45;display:block}}
+</style></head><body>{scr}{"".join(ov)}<script>
+// смена экрана: fade | slide (как переход в приложении); анимации замедляются при записи вместе со всем остальным
+window.dsgShow = (n, kind = 'slide', dur = 450) => {{
+  const all = [...document.querySelectorAll('.dsg-scr')], cur = all.find(e => e.style.display !== 'none'), nx = all[n];
+  if (!nx || nx === cur) return;
+  nx.style.display = ''; nx.style.position = 'fixed'; nx.style.inset = '0'; nx.style.zIndex = 30; nx.style.background = getComputedStyle(document.body).backgroundColor;
+  const a = kind === 'fade' ? [{{opacity: 0}}, {{opacity: 1}}] : [{{transform: 'translateX(100%)'}}, {{transform: 'none'}}];
+  nx.animate(a, {{duration: dur, easing: 'cubic-bezier(.3,.7,.3,1)'}}).finished.then(() => {{
+    cur.style.display = 'none'; nx.style.position = ''; nx.style.inset = ''; nx.style.zIndex = ''; scrollTo(0, 0); }});
+}};
+</script></body></html>"""
+    p = work / "screens.html"
+    p.write_text(html, "utf-8")
+    return p
+
+
 def _resolve(source: str) -> str:
     if source.startswith(("http://", "https://", "file://")):
         return source
@@ -164,10 +200,14 @@ async def record(spec: dict, out_dir: Path, name: str, progress=None) -> dict:
         return {"issues": ["На сервере нет ffmpeg — ролик не собрать. Нужно обновление сервера (ставится автоматически)."]}
     W, H = FORMATS.get(spec.get("format") or "4:5", FORMATS["4:5"])
     VW, VH, K, B, SW, SH, cap = _layout(spec, W, H)
-    src = _resolve(spec["source"])
     work = out_dir / f".{name}-frames"
     shutil.rmtree(work, ignore_errors=True)
     work.mkdir(parents=True)
+    if spec.get("screens"):
+        spec.setdefault("header", False)   # шапка уже в экране из Figma
+        src = screens_page(spec, work).resolve().as_uri()
+    else:
+        src = _resolve(spec["source"])
     issues: list[str] = []
     pal = spec.get("palette") or "violet"
     bg = (brandgfx.palettes().get(pal) or brandgfx.palettes()["violet"])["bg"]
@@ -228,7 +268,15 @@ iframe{{border:0;width:{VW}px;height:{VH}px;transform:scale({K});transform-origi
                 py = H * fy - B - fc[1] * K
             else:
                 px = (W - SW) / 2 - B
-                py = (H - SH) / 2 - B + (H * 0.06 if cap and spec.get("caption_pos") == "top" else 0)
+                if cap and spec.get("caption_pos") not in ("none",):
+                    # место под подпись (сверху по умолчанию для целого телефона), телефон — по центру остального
+                    capz = max(H * 0.17, 200)
+                    top = spec.get("caption_pos") in (None, "auto", "top")
+                    py = (capz + (H - capz - SH - 2 * B) / 2) if top else (H - capz - SH - 2 * B) / 2
+                    if H - capz - SH - 2 * B < 0:   # телефон выше свободного места — пусть уходит за нижний/верхний край
+                        py = capz if top else H - capz - SH - 2 * B
+                else:
+                    py = (H - SH) / 2 - B
             phone = (px, py, px + SW + 2 * B, py + SH + 2 * B)
             # подпись — в самую большую свободную зону сверху/снизу
             cap_box = None
@@ -309,6 +357,17 @@ iframe{{border:0;width:{VW}px;height:{VH}px;transform:scale({K});transform-origi
                     await fr.evaluate(f"scrollTo(0, {y0 + (max(0, y) - y0) * e})")
                     await asyncio.sleep(float(dur) * rate / n)
 
+            async def scroll_by(dy, dur):
+                y0 = await fr.evaluate("scrollY")
+                ymax = await fr.evaluate("document.documentElement.scrollHeight - innerHeight")
+                y1 = max(0, min(ymax, y0 + dy)) if dy == dy else 0
+                n = max(2, int(float(dur) * 50))
+                for k in range(n + 1):
+                    e = k / n
+                    e = e * e * (3 - 2 * e)
+                    await fr.evaluate(f"scrollTo(0, {y0 + (y1 - y0) * e})")
+                    await asyncio.sleep(float(dur) * rate / n)
+
             task = asyncio.create_task(shooter())
             t0 = time.time()
             await wait(spec.get("lead", 0.4))
@@ -325,6 +384,16 @@ iframe{{border:0;width:{VW}px;height:{VH}px;transform:scale({K});transform-origi
                         await fr.evaluate(f"() => {{ {st['js']} }}")
                     except Exception as e:
                         issues.append(f"js: {str(e).splitlines()[0][:120]}")
+                elif "scroll_by" in st:
+                    await scroll_by(float(st["scroll_by"]), st.get("dur", 1.2))
+                elif "screen" in st:
+                    await fr.evaluate(f"dsgShow({int(st['screen'])}, '{'fade' if st.get('transition') == 'fade' else 'slide'}', {int(float(st.get('dur', 0.45)) * 1000)})")
+                    await wait(float(st.get("dur", 0.45)) + 0.05)
+                elif "tap_at" in st:
+                    x, y = st["tap_at"]
+                    await fr.evaluate("([x,y]) => { const t=document.createElement('div'); t.className='dsg-tap'; t.style.left=x+'px';"
+                                      " t.style.top=y+'px'; document.body.append(t); setTimeout(()=>t.remove(), 30000);"
+                                      " const e = document.elementFromPoint(x, y); if (e && e.click) e.click() }", [x, y])
                 elif "scroll_to" in st:
                     await scroll(st["scroll_to"], st.get("dur", 0.8))
                 if (time.time() - t0) / rate > 20:

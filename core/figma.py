@@ -133,6 +133,7 @@ EXPORT = {
         "node_id": {"type": "string", "description": "id из figma_find, напр. 12:345"},
         "file": {"type": "string"},
         "name": {"type": "string", "description": "имя файла латиницей"},
+        "full": {"type": "boolean", "description": "не обрезать по высоте — для роликов с прокруткой (длинная лента, страница)"},
         "scale": {"type": "integer", "enum": [2, 3, 4], "description": "чёткость; мобильный экран (375) — 3, "
                   "если автопроверка пишет «картинка мелкая» — 4. По умолчанию 2"},
     }, "required": ["node_id", "name"]},
@@ -197,7 +198,10 @@ async def export(inp: dict, ctx: Ctx):
     # ширину ограничиваем, а по высоте берём верх — витрины всё равно показывают верх экрана.
     if im.width > MAX_SIDE:
         im = im.resize((MAX_SIDE, round(im.height * MAX_SIDE / im.width)), Image.LANCZOS)
-    if im.height > im.width * 2.4:
+    if inp.get("full"):
+        if im.height > 16000:
+            im = im.crop((0, 0, im.width, 16000))
+    elif im.height > im.width * 2.4:
         im = im.crop((0, 0, im.width, round(im.width * 2.4)))
     from core.common_tools import safe_name
     p = ctx.job_dir / f"figma-{safe_name(inp['name'], 'frame')}.png"
