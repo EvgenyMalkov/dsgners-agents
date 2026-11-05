@@ -8,7 +8,7 @@ ENVF="$APP/.env"
 
 echo "== Пакеты системы"
 apt-get update -y -q
-apt-get install -y -q python3-venv fonts-inter caddy
+apt-get install -y -q python3-venv fonts-inter caddy ffmpeg
 
 echo "== Python-окружение"
 sudo -u agents python3 -m venv "$APP/.venv"

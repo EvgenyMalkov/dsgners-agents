@@ -14,7 +14,10 @@ notify(){  # сообщение владельцам в Telegram
   done
 }
 
-deps(){ sudo -u agents "$APP/.venv/bin/pip" install -q -r "$APP/requirements.txt"; }
+deps(){ sudo -u agents "$APP/.venv/bin/pip" install -q -r "$APP/requirements.txt"; sysdeps; }
+sysdeps(){  # системные программы, которые понадобились позже (ffmpeg — для роликов дизайнера)
+  command -v ffmpeg >/dev/null || DEBIAN_FRONTEND=noninteractive apt-get install -y -q ffmpeg >/dev/null 2>&1 || true
+}
 
 install_units(){
   cp "$APP/deploy/dsgners-bot.service" "$APP/deploy/dsgners-autoupdate.service" "$APP/deploy/dsgners-autoupdate.timer" /etc/systemd/system/

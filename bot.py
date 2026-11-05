@@ -661,8 +661,18 @@ async def with_image(m: Message, bot: Bot):
                        "SEO-шник учтёт их в контент-плане и статьях." if n else
                        "Не нашёл в файле пар «фраза — частотность». Пришли выгрузку Вордстата как есть (CSV или XLSX).")
         return
+    if m.document and fname.endswith((".html", ".htm")):
+        # HTML-прототип фичи → по умолчанию дизайнеру на ролик
+        dest = config.DATA / "uploads" / f"{uuid.uuid4().hex[:10]}-{Path(fname).name}"
+        await bot.download(m.document.file_id, destination=dest)
+        agent, shown = route(m.caption or "")
+        if not (m.caption or "").startswith("/") and m.from_user.id in NEXT_AGENT:
+            agent = NEXT_AGENT.pop(m.from_user.id)
+        shown = shown or "Ролик по прототипу"
+        await _start(m, agent, shown, f"{shown}\n\nПрикреплённый HTML-прототип: {dest}")
+        return
     if m.document and not (m.document.mime_type or "").startswith("image/"):
-        await m.answer("Понимаю картинки и выгрузки Вордстата (CSV/XLSX). Другие документы — в офисе → «Знания».")
+        await m.answer("Понимаю картинки, HTML-прототипы (для роликов) и выгрузки Вордстата (CSV/XLSX). Другие документы — в офисе → «Знания».")
         return
     file_id = m.photo[-1].file_id if m.photo else m.document.file_id
     ext = ".jpg" if m.photo else ("." + (m.document.file_name or "x.png").rsplit(".", 1)[-1])
@@ -1054,6 +1064,8 @@ async def send_review(job: dict):
         # у SMM показываем то, что уйдёт в канал: картинка вместе с текстом поста, без рабочих материалов
         imgs = []
     imgs = [f for f in imgs if not f.name.startswith("figma-")]
+    vids = [f for f in files if f.suffix.lower() == ".mp4" and f.exists()][:4]
+    docs = [d for d in docs if d.suffix.lower() not in (".mp4", ".json")]
     title = f"{ICON.get(job['agent'], '🤖')} {AGENTS[job['agent']]['title']}"
     from core import site_api
     meta = job.get("meta") or {}
@@ -1073,6 +1085,8 @@ async def send_review(job: dict):
         elif imgs:
             for sent in await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f)) for f in imgs]):
                 MSG_JOB[sent.message_id] = job["id"]
+        for v in vids:
+            MSG_JOB[(await BOT.send_animation(uid, FSInputFile(v))).message_id] = job["id"]
         for d in docs:
             await BOT.send_document(uid, FSInputFile(d))
         if meta.get("letter"):
