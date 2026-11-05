@@ -9,3 +9,4 @@ pypdf>=4
 openpyxl>=3.1
 markdown>=3.5
 rembg[cpu]>=2.0.50
+telethon>=1.36,<2

@@ -1,7 +1,11 @@
-"""Работа PR-агента: сбор, дайджест, проверка источников, статус и расписание (время — SEO_TZ, Москва).
+"""Работа PR-агента: сбор, подготовка карточек, дайджест, напоминания, отчёт и расписание (время — SEO_TZ, Москва).
 
+понедельник 06:00 — перечитать профили авторов дизайнерс (имя, внешние ссылки) — для сверки
 07:00 — сбор новых статей за сутки и оценка (тихо)
-10:00 — дайджест: до PR_DIGEST_MAX карточек с итоговой оценкой ≥ PR_MIN_SCORE, кнопки 👍/👎
+10:00 — дайджест: до PR_DIGEST_MAX карточек ≥ PR_MIN_SCORE. В карточке: 🆕/💤, контакты, черновик и кнопки
+11:00 — кто прочитал и не ответил 7 дней → черновик напоминания на «✅»; @SpamBot; чистка старых контактов
+понедельник 10:30 — итоги недели
+Отправка — sender.py (окно 10–19, лимиты), ответы авторов — сразу владельцу.
 """
 import asyncio
 import datetime as dt
@@ -10,7 +14,7 @@ import time
 from zoneinfo import ZoneInfo
 
 from core import config, spend
-from core.pr import score, sources, store
+from core.pr import authors, contacts, outreach, score, sender, sources, store
 
 log = logging.getLogger("pr.jobs")
 
@@ -22,23 +26,34 @@ PER_RUN = int(config.env("PR_PER_RUN", "120"))          # статей разо�
 AI_PER_RUN = int(config.env("PR_AI_PER_RUN", "60"))     # из них оценить Claude
 SCAN_HOUR = int(config.env("PR_SCAN_HOUR", "7"))
 DIGEST_HOUR = int(config.env("PR_DIGEST_HOUR", "10"))
+CONTACT_TTL = int(config.env("PR_CONTACT_TTL_DAYS", "90"))
 SITE_NAME = {"habr": "Хабр", "vc": "vc.ru"}
 
-_send = None      # async (text, article_id | None) — в Telegram владельцам; с id — с кнопками 👍/👎
+_send = None      # async (text, aid | None, oid | None) — в Telegram владельцам с нужными кнопками
 _running: set[str] = set()
 
 
 def setup(send):
     global _send
     _send = send
+    sender.setup(lambda t: say(t))
 
 
-async def say(text: str, aid: int | None = None):
+async def say(text: str, aid: int | None = None, oid: int | None = None):
     if _send:
         try:
-            await _send(text, aid)
+            await _send(text, aid, oid)
         except Exception:
             log.exception("pr notify failed")
+
+
+def outreach_on() -> bool:
+    v = store.get("outreach_on")
+    return (config.env("PR_OUTREACH", "1") == "1") if v is None else bool(v)
+
+
+def set_outreach_on(v: bool):
+    store.put("outreach_on", v)
 
 
 def _now() -> dt.datetime:
@@ -57,6 +72,37 @@ def _kind(row: dict, kinds: dict) -> str:
 
 
 # ---------- сбор ----------
+
+async def _rate_one(s, row: dict, kind: str, use_ai: bool = True) -> str:
+    """Детали → фильтр → сигнал → Claude. Возвращает итоговую стадию."""
+    item = sources.Item(url=row["url"], title=row["title"], author=row["author"], published=row["published"] or 0)
+    try:
+        a = await sources.details(s, kind, item)
+    except Exception as e:
+        store.update_article(row["id"], stage="error", reason=f"не прочиталась: {e}"[:200])
+        return "error"
+    reason = score.filter_reason(a, kind)
+    sig = score.signal(a)
+    ast = dict(a.author_stats, vc_id=a.author_id) if a.author_id else a.author_stats
+    store.update_article(row["id"], title=a.title or row["title"], author=a.author, author_url=a.author_url,
+                         published=a.published or row["published"], chars=len(a.text), images=a.images,
+                         stats=a.stats, author_stats=ast, signal=sig, links=a.links, excerpt=a.text[:4000])
+    if reason:
+        store.update_article(row["id"], stage="rejected", reason=reason)
+        return "rejected"
+    if not use_ai:
+        return "new"
+    r = await score.ai_rate(a)
+    if r.get("author_kind") in ("company", "school"):
+        store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r,
+                             reason="блог компании (Claude)" if r["author_kind"] == "company" else "школа (Claude)")
+        return "rejected"
+    if not r.get("design", True):
+        store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r, reason="не про дизайн (Claude)")
+        return "rejected"
+    store.update_article(row["id"], stage="scored", ai=r["score"], ai_json=r, total=score.total(r["score"], sig))
+    return "scored"
+
 
 async def scan() -> str:
     t0 = time.time()
@@ -85,45 +131,19 @@ async def scan() -> str:
         rated = rejected = errors = 0
         budget_stop = False
         for row in store.by_stage("new", PER_RUN):
-            kind = _kind(row, kinds)
-            item = sources.Item(url=row["url"], title=row["title"], author=row["author"], published=row["published"] or 0)
-            try:
-                a = await sources.details(s, kind, item)
-            except Exception as e:
-                store.update_article(row["id"], stage="error", reason=f"не прочиталась: {e}"[:200])
-                errors += 1
-                continue
-            reason = score.filter_reason(a, kind)
-            sig = score.signal(a)
-            store.update_article(row["id"], title=a.title or row["title"], author=a.author, author_url=a.author_url,
-                                 published=a.published or row["published"], chars=len(a.text), images=a.images,
-                                 stats=a.stats, author_stats=a.author_stats, signal=sig)
-            if reason:
-                store.update_article(row["id"], stage="rejected", reason=reason)
-                rejected += 1
-                continue
-            if rated >= AI_PER_RUN:
-                continue                       # останется «new» — оценим в следующий раз
             if score.over_budget():
                 budget_stop = True
                 break
             try:
-                r = await score.ai_rate(a)
+                st = await _rate_one(s, row, _kind(row, kinds), use_ai=rated < AI_PER_RUN)
             except Exception as e:
-                log.warning("pr ai %s: %s", a.url, e)
+                log.warning("pr rate %s: %s", row["url"], e)
                 errors += 1
                 continue
-            rated += 1
-            if r.get("author_kind") in ("company", "school"):
-                store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r,
-                                     reason="блог компании (Claude)" if r["author_kind"] == "company" else "школа (Claude)")
-                rejected += 1
-            elif not r.get("design", True):
-                store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r, reason="не про дизайн (Claude)")
-                rejected += 1
-            else:
-                store.update_article(row["id"], stage="scored", ai=r["score"], ai_json=r, total=score.total(r["score"], sig))
-    note = (f"новых {new_total}, оценено Claude {rated}, отсеяно {rejected}"
+            rated += st == "scored"
+            rejected += st == "rejected"
+            errors += st == "error"
+    note = (f"новых {new_total}, оценено {rated}, отсеяно {rejected}"
             + (f", не прочиталось {errors}" if errors else "") + f", {time.time() - t0:.0f} с")
     if feed_err:
         note += f"; источники с ошибкой: {len(feed_err)}"
@@ -134,7 +154,39 @@ async def scan() -> str:
     return note
 
 
-# ---------- дайджест ----------
+# ---------- подготовка карточки: контакты, сверка с дизайнерс, черновик ----------
+
+def _ext_links(r: dict, cs: list[dict]) -> list[str]:
+    out = [r.get("author_url") or ""]
+    for c in cs:
+        if c["confidence"] != "high":
+            continue
+        out.append({"tg": f"t.me/{c['value']}", "vk": f"vk.com/{c['value']}"}.get(c["channel"], c["value"]))
+    return [x for x in out if x]
+
+
+async def prepare(r: dict, draft: bool = True) -> dict | None:
+    """Карточка готова к показу → обновлённая статья; None — статья уже есть на дизайнерс (отсеяна)."""
+    try:
+        cs = await contacts.find(r, r.get("links") or [])
+    except Exception:
+        log.exception("contacts %s", r["url"])
+        cs = store.contacts_for(r["id"])
+    m, slug = authors.match(r, _ext_links(r, cs))
+    store.update_article(r["id"], match=m, dsg_slug=slug)
+    if m == "sure" and authors.has_article(slug, r["title"]):
+        store.update_article(r["id"], stage="rejected", reason="уже на дизайнерс")
+        return None
+    if draft and outreach_on() and not store.outreach_for_article(r["id"]):
+        cs = await contacts.validate(cs) if cs else cs
+        au = r.get("author_url", "")
+        best = contacts.best(cs, skip=lambda c: store.stopped(c["value"], au) or store.already_contacted(c["value"], au))
+        if best:
+            d = await outreach.draft(store.article(r["id"]), m)
+            if d.get("text"):
+                store.add_outreach(r["id"], best["id"], best["channel"], best["value"], d["text"])
+    return store.article(r["id"])
+
 
 def _ago(ts: float) -> str:
     if not ts:
@@ -142,8 +194,7 @@ def _ago(ts: float) -> str:
     h = (time.time() - ts) / 3600
     if h < 24:
         return f"{max(1, int(h))} ч назад"
-    d = int(h // 24)
-    return f"{d} дн. назад"
+    return f"{int(h // 24)} дн. назад"
 
 
 def _k(n: float) -> str:
@@ -151,12 +202,29 @@ def _k(n: float) -> str:
     return f"{n / 1000:.1f}k".replace(".0k", "k") if n >= 1000 else str(n)
 
 
+ST = {"ok": "✅", "dead": "❌ нет такого", "bot": "🤖 бот", "channel": "📢 канал", "unchecked": "· не проверен",
+      "unknown": "· не проверен", "manual": "✋ вручную"}
+OUT_ST = {"draft": "черновик", "approved": "⏳ в очереди на отправку", "sent": "✉️ отправлено", "read": "👀 прочитано",
+          "replied": "💬 ответил", "skipped": "⏭ пропущено", "failed": "⚠️ не отправилось", "stopped": "🚫 стоп-лист"}
+
+
+def _contact_line(c: dict) -> str:
+    v = f"@{c['value']}" if c["channel"] == "tg" else c["value"] if c["channel"] == "email" else f"vk.com/{c['value']}"
+    src = "ссылка в статье" if c["source"].startswith("ссылка в статье") else c["source"]
+    return f"∙ {v} — {ST.get(c['status'], c['status'])}{' (' + c['note'] + ')' if c['note'] and c['status'] == 'ok' else ''}" \
+           f" · {'уверенно' if c['confidence'] == 'high' else 'не точно'} · {src}"
+
+
 def card(r: dict) -> str:
     ai = r.get("ai_json") or {}
     st = r.get("stats") or {}
+    tag = {"none": "🆕 Новый автор", "sure": f"💤 Есть на дизайнерс: dsgners.ru/{r.get('dsg_slug')}",
+           "maybe": f"❔ Возможно, есть на дизайнерс: dsgners.ru/{r.get('dsg_slug')}"}.get(r.get("match") or "", "")
     lines = [f"⭐ {r['total']} · {SITE_NAME.get(r['site'], r['site'])} · {_ago(r['published'])}"
-             + (f" · {ai['type']}" if ai.get("type") else ""),
-             r["title"], r["url"]]
+             + (f" · {ai['type']}" if ai.get("type") else "")]
+    if tag:
+        lines.append(tag)
+    lines += [r["title"], r["url"]]
     if r.get("author"):
         lines.append(f"Автор: {r['author']}" + (f" — {r['author_url']}" if r.get("author_url") else ""))
     if ai.get("why"):
@@ -165,24 +233,59 @@ def card(r: dict) -> str:
                                 f"💬{_k(st.get('comments'))}" if st.get("comments") else "",
                                 f"👁{_k(st.get('views'))}" if st.get("views") else "") if x)
     lines.append(f"Claude {r['ai']:.0f}/10 · площадка {r['signal']:.1f}/10" + (f" · {nums}" if nums else ""))
+    cs = store.contacts_for(r["id"])
+    if cs:
+        lines.append("\nКонтакты:")
+        lines += [_contact_line(c) for c in cs[:5]]
+    else:
+        lines.append("\nКонтактов автор не оставил.")
+    outs = store.outreach_for_article(r["id"])
+    o = next((x for x in reversed(outs) if x["kind"] == "first"), None)
+    if o:
+        to = {"tg": f"@{o['value']}", "vk": f"vk.com/{o['value']}"}.get(o["channel"], o["value"])
+        lines.append(f"\n✉️ {OUT_ST.get(o['status'], o['status'])} → {to}"
+                     + (f" ({o['note']})" if o["note"] and o["status"] in ("failed", "skipped") else ""))
+        lines.append(o["text"])
+        if o["channel"] == "vk":
+            lines.append("\n(VK — отправь вручную и нажми «📋 Отправил вручную»)")
+    elif cs and outreach_on():
+        lines.append("\nЧерновика нет: нет проверенного контакта" + ("" if sender.ready() else
+                     " — аккаунт менеджера не подключён, @ не проверены (/pr_login)"))
     return "\n".join(lines)
+
+
+def followup_card(o: dict) -> str:
+    a = store.article(o["article_id"]) or {}
+    return (f"🔔 Напоминание @{o['value']} — прочитал первое сообщение и не ответил\n"
+            f"Статья: «{a.get('title', '')}»\n{a.get('url', '')}\n\n"
+            f"✉️ {OUT_ST.get(o['status'], o['status'])}:\n{o['text']}")
 
 
 async def digest() -> str:
     since = time.time() - 86400
     c = store.counts_since(since)
-    rows = store.digest_candidates(MIN_SCORE, DIGEST_MAX)
     reasons = ", ".join(f"{r} {n}" for r, n in store.reasons_since(since)[:5])
     up, down = store.votes_total()
+    rows = []
+    for r in store.digest_candidates(MIN_SCORE, DIGEST_MAX * 2):
+        if len(rows) >= DIGEST_MAX:
+            break
+        p = await prepare(r)
+        if p:
+            rows.append(p)
     head = (f"🤝 PR · дайджест на {_now():%d.%m}\n"
             f"За сутки найдено {c['found']}, отсеяно {c['rejected']}" + (f" ({reasons})" if reasons else "")
             + f", оценено {c['scored'] + c['sent']}. В подборке: {len(rows)}.")
+    if outreach_on():
+        head += f"\nОтправка: {sender_line()}"
     if up + down < 30:
         head += ("\n\nИдёт калибровка: отметь каждую карточку 👍 или 👎 — по отметкам подстрою оценку. "
                  f"Отмечено пока {up + down}.")
     if not rows:
         best = store.best_below(MIN_SCORE)
         head += f"\n\nВыше порога {MIN_SCORE:g} ничего нет."
+        if best:
+            best = await prepare(best, draft=False)
         if best:
             head += f" Лучшая из оценённых — {best['total']}:"
         await say(head)
@@ -195,7 +298,38 @@ async def digest() -> str:
         await say(card(r), r["id"])
         store.update_article(r["id"], stage="sent", sent=time.time())
         await asyncio.sleep(0.4)
-    return f"отправлено карточек: {len(rows)}"
+    drafts = sum(1 for r in rows if store.outreach_for_article(r["id"]))
+    return f"карточек {len(rows)}, с черновиком {drafts}"
+
+
+def sender_line() -> str:
+    if not sender.ready():
+        return "аккаунт менеджера не подключён (/pr_login)"
+    p = sender.paused()
+    return (f"{sender.me()} · сегодня {sender.sent_today()}/{sender.limit_today()} · окно "
+            f"{sender.WINDOW[0]}:00–{sender.WINDOW[1]}:00" + (f" · ⏸ пауза: {p}" if p else ""))
+
+
+async def one(url: str) -> str:
+    """/pr_author адрес — разобрать одну статью и прислать карточку."""
+    url = sources._clean_url(url.strip())
+    site = "habr" if "habr.com" in url else "vc" if "vc.ru" in url else "rss"
+    if not store.known(url):
+        store.add_article(url, site, 0, "", "", 0)
+    row = store.db().execute("SELECT id FROM articles WHERE url=?", (url,)).fetchone()
+    r = store.article(row[0])
+    if r["stage"] in ("new", "error", "rejected"):
+        store.update_article(r["id"], stage="new", reason="")
+        async with sources.session() as s:
+            st = await _rate_one(s, store.article(r["id"]), site)
+        r = store.article(r["id"])
+        if st != "scored":
+            return f"Статья отсеяна: {r['reason'] or st}."
+    p = await prepare(r)
+    if not p:
+        return f"Эта статья уже есть у автора на дизайнерс (dsgners.ru/{store.article(r['id'])['dsg_slug']})."
+    await say(card(p), p["id"])
+    return "карточка выше"
 
 
 def vote(aid: int, v: int) -> dict | None:
@@ -203,6 +337,95 @@ def vote(aid: int, v: int) -> dict | None:
     if r:
         store.update_article(aid, vote=v, vote_ts=time.time())
     return r
+
+
+# ---------- действия с черновиком (кнопки) ----------
+
+def approve(oid: int) -> dict | None:
+    o = store.outreach(oid)
+    if o and o["status"] in ("draft", "failed"):
+        store.set_outreach(oid, status="approved", approved=time.time(), note="")
+    return store.outreach(oid)
+
+
+async def redraft(oid: int, comment: str = "") -> dict | None:
+    o = store.outreach(oid)
+    if not o or o["status"] not in ("draft", "failed"):
+        return o
+    a = store.article(o["article_id"])
+    if o["kind"] == "followup":
+        first = next((x for x in store.outreach_for_article(a["id"]) if x["kind"] == "first"), None)
+        text = await outreach.follow_up((first or {}).get("text", ""), a)
+    else:
+        if comment:
+            outreach.add_rule(comment)
+        text = (await outreach.draft(a, a.get("match") or "none", comment=comment, previous=o["text"])).get("text")
+    if text:
+        store.set_outreach(oid, text=text, status="draft")
+    return store.outreach(oid)
+
+
+def skip(oid: int):
+    store.set_outreach(oid, status="skipped")
+
+
+def stop_forever(oid: int):
+    o = store.outreach(oid)
+    if not o:
+        return
+    a = store.article(o["article_id"]) or {}
+    store.stop(o["value"], "владелец: не писать")
+    if a.get("author_url"):
+        store.stop(a["author_url"], "владелец: не писать")
+    for c in store.contacts_for(o["article_id"]):
+        store.stop(c["value"], "владелец: не писать")
+    store.set_outreach(oid, status="stopped")
+
+
+def manual_sent(oid: int):
+    store.set_outreach(oid, status="sent", sent=time.time(), note="вручную")
+
+
+# ---------- ежедневное: напоминания, @SpamBot, чистка ----------
+
+async def daily() -> str:
+    notes = []
+    if sender.ready():
+        due = await sender.check_read()
+        for o in due:
+            a = store.article(o["article_id"])
+            text = await outreach.follow_up(o["text"], a)
+            if text:
+                oid = store.add_outreach(o["article_id"], o["contact_id"], o["channel"], o["value"], text, kind="followup")
+                await say(followup_card(store.outreach(oid)), None, oid)
+        notes.append(f"напоминаний {len(due)}")
+        notes.append(f"@SpamBot: {await sender.spambot()}")
+    n = store.forget_contacts(CONTACT_TTL)
+    if n:
+        notes.append(f"удалено старых контактов {n}")
+    return ", ".join(notes) or "нечего делать"
+
+
+async def weekly() -> str:
+    since = time.time() - 7 * 86400
+    c = store.counts_since(since)
+    o = store.outreach_stats(since)
+    up, down = store.votes_total()
+    by_site = store.db().execute(
+        "SELECT site, COUNT(*) n, ROUND(AVG(total),1) t FROM articles WHERE found>=? AND stage IN ('scored','sent') "
+        "GROUP BY site ORDER BY n DESC", (since,)).fetchall()
+    joined = store.db().execute(
+        "SELECT COUNT(DISTINCT a.author_url) FROM outreach o JOIN articles a ON a.id=o.article_id "
+        "WHERE o.status='replied' AND o.replied>=?", (since,)).fetchone()[0]
+    text = (f"🤝 PR · итоги недели\n\n"
+            f"Статей найдено {c['found']}, отсеяно {c['rejected']}, в дайджестах {c['sent']}\n"
+            f"Площадки: " + (", ".join(f"{SITE_NAME.get(r['site'], r['site'])} {r['n']} (ср. {r['t']})" for r in by_site) or "—")
+            + f"\nЧерновиков {o['drafts']}, отправлено {o['sent']}, прочитали {o['read']}, ответили {o['replied']}"
+            f" ({joined} авторов)\nОтметки всего: 👍 {up} · 👎 {down}\n"
+            f"Правил для сообщений из твоих правок: {len(outreach.rules())}\n"
+            f"Потрачено на PR в этом месяце: ${spend.by_agent_this_month().get('pr', 0):.2f}")
+    await say(text)
+    return "отправлено"
 
 
 # ---------- проверка источников и статус ----------
@@ -229,14 +452,16 @@ async def test() -> str:
                 out.append(f"✅ #{src['id']} {src['title']}{flag}: в ленте {len(items)}\n"
                            f"   «{a.title[:70]}» — через {a.via or '?'}\n"
                            f"   автор: {a.author or '—'} {a.author_url}\n"
-                           f"   знаков {len(a.text)}, картинок {a.images}, блог компании: "
+                           f"   знаков {len(a.text)}, картинок {a.images}, ссылок в тексте {len(a.links)}, блог компании: "
                            f"{'да' if a.corporate else 'нет' if a.corporate is False else 'не знаю'}, "
                            f"перевод: {'да' if a.translation else 'нет'}\n"
                            f"   цифры: {st}; автор: {au}\n"
                            f"   фильтр: {score.filter_reason(a, src['kind']) or 'прошла'}, площадка {score.signal(a)}/10")
             except Exception as e:
                 out.append(f"⚠️ #{src['id']} {src['title']}{flag}: в ленте {len(items)}, но статья не прочиталась: {e}")
-    return "🧪 Проверка источников PR\n\n" + "\n\n".join(out)
+    out.append(f"Аккаунт отправки: {sender_line()}")
+    out.append(f"Авторов дизайнерс в базе сверки: {len(store.dsg_authors())}")
+    return "🧪 Проверка PR\n\n" + "\n\n".join(out)
 
 
 def status() -> str:
@@ -249,16 +474,25 @@ def status() -> str:
         return f"{dt.datetime.fromtimestamp(r['ts'], ZoneInfo(config.SEO_TZ)):%d.%m %H:%M} — {r['note']}"
     up, down = store.votes_total()
     c = store.counts_since(time.time() - 7 * 86400)
+    o = store.outreach_stats(time.time() - 7 * 86400)
+    queue = len(store.outreach_by("approved"))
+    sb = store.get("spambot") or {}
     lines = [f"🤝 PR-агент: {'включён' if ENABLED else 'выключен (PR_ENABLED=0)'}",
              f"Сбор {SCAN_HOUR:02d}:00, дайджест {DIGEST_HOUR:02d}:00 (МСК). Порог {MIN_SCORE:g}, до {DIGEST_MAX} карточек.",
-             f"Модель оценки: {score.MODEL}. Потрачено в этом месяце: ${spend.by_agent_this_month().get('pr', 0):.2f}",
+             f"Модели: оценка {score.MODEL}, сообщения {outreach.MODEL}. "
+             f"Потрачено в этом месяце: ${spend.by_agent_this_month().get('pr', 0):.2f}",
              f"Последний сбор: {last('scan')}", f"Последний дайджест: {last('digest')}",
+             f"Напоминания и проверки: {last('daily')}", f"Профили дизайнерс: {last('authors')}",
              f"За 7 дней: найдено {c['found']}, отсеяно {c['rejected']}, в дайджесте {c['sent']}, ждут {c['new']}",
-             f"Отметки: 👍 {up} · 👎 {down}", "", "Источники:"]
+             f"Отметки: 👍 {up} · 👎 {down}", "",
+             f"Черновики: {'включены' if outreach_on() else 'выключены'} (/pr_outreach on|off)",
+             f"Отправка: {sender_line()}", f"В очереди: {queue}",
+             f"За 7 дней: отправлено {o['sent']}, прочитали {o['read']}, ответили {o['replied']}",
+             f"@SpamBot: {'ок' if sb.get('ok') else 'ограничен' if sb else 'не проверялся'}",
+             f"Правил для сообщений: {len(outreach.rules())}", "", "Источники:"]
     for s in store.sources():
         mark = "⏸" if not s["enabled"] else "✅" if s["last_ok"] else "❌" if s["last_ok"] == 0 else "·"
         lines.append(f"{mark} #{s['id']} {s['title']} — {s['last_note'] or 'ещё не читался'}")
-    lines.append("\nКонтакты и отправка — следующие этапы, пока выключены.")
     return "\n".join(lines)
 
 
@@ -268,14 +502,22 @@ def due(name: str) -> bool:
     now = _now()
     last = store.last_run(name)
     done_today = bool(last) and _date(last) >= now.date()
+    if name == "authors":   # раз в неделю (и сразу, если база пустая)
+        return not store.dsg_authors() and not last or (now.weekday() == 0 and now.hour >= 6 and not done_today)
     if name == "scan":
         return now.hour >= SCAN_HOUR and not done_today
     if name == "digest":
         scan_last = store.last_run("scan")
         scanned_today = bool(scan_last) and _date(scan_last) >= now.date()
-        return now.hour >= DIGEST_HOUR and not done_today and (scanned_today or now.hour >= DIGEST_HOUR + 3) \
-            and "scan" not in _running
+        return now.hour >= DIGEST_HOUR and not done_today and (scanned_today or now.hour >= DIGEST_HOUR + 3)
+    if name == "daily":
+        return now.hour >= 11 and not done_today
+    if name == "weekly":
+        return now.weekday() == 0 and (now.hour, now.minute) >= (10, 30) and not done_today
     return False
+
+
+JOBS = {"authors": authors.refresh, "scan": scan, "digest": digest, "daily": daily, "weekly": weekly}
 
 
 async def run(name: str) -> str:
@@ -283,7 +525,7 @@ async def run(name: str) -> str:
         return "уже выполняется"
     _running.add(name)
     try:
-        note = await {"scan": scan, "digest": digest}[name]()
+        note = await JOBS[name]()
         store.mark_run(name, True, note)
         log.info("pr %s: %s", name, note)
         return note
@@ -296,24 +538,23 @@ async def run(name: str) -> str:
         _running.discard(name)
 
 
-async def _bg(name: str):
-    _running.discard(name)
-    await run(name)
-
-
 async def loop():
     if not ENABLED:
         log.info("PR-агент выключен (PR_ENABLED=0)")
         return
     store.db()
     await asyncio.sleep(40)
+    try:
+        await sender.start()
+    except Exception:
+        log.exception("PR: отправка не запустилась")
     while True:
-        for name in ("scan", "digest"):
-            try:
-                if name not in _running and due(name):
-                    _running.add(name)          # занять сразу, чтобы дайджест не стартовал раньше сбора
-                    asyncio.create_task(_bg(name))
-                    break
-            except Exception:
-                log.exception("pr scheduler")
+        if not _running:                         # по одной задаче за раз: сбор → дайджест → остальное
+            for name in ("authors", "scan", "digest", "daily", "weekly"):
+                try:
+                    if due(name):
+                        asyncio.create_task(run(name))
+                        break
+                except Exception:
+                    log.exception("pr scheduler")
         await asyncio.sleep(60)

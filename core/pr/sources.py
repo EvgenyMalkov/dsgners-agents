@@ -57,6 +57,8 @@ class Article:
     hubs: list[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)          # score, comments, favorites, views
     author_stats: dict = field(default_factory=dict)   # karma, rating, posts, followers
+    author_id: str = ""                                 # id автора на площадке (vc)
+    links: list = field(default_factory=list)           # ссылки из текста: {"url", "ctx"} — 150 знаков вокруг
     via: str = ""                                       # api | page
 
 
@@ -158,6 +160,22 @@ def html_to_text(h: str) -> str:
     return re.sub(r"\n\s*\n+", "\n\n", t).strip()
 
 
+def extract_links(h: str) -> list[dict]:
+    """Ссылки из HTML с текстом вокруг (по нему видно, свой ли это канал: «мой канал», «подписывайтесь»)."""
+    out, seen = [], set()
+    for m in re.finditer(r'(?is)<a[^>]+href=["\']([^"\']+)["\'][^>]*>(.*?)</a>', h or ""):
+        url = htmllib.unescape(m.group(1)).strip()
+        if not url.startswith(("http", "mailto:")) or url in seen:
+            continue
+        seen.add(url)
+        before = html_to_text(h[max(0, m.start() - 400):m.start()])
+        anchor = html_to_text(m.group(2))
+        # только то, что относится к этой ссылке: конец предложения перед ней + текст самой ссылки
+        before = re.split(r"[.!?\n]\s", before)[-1][-120:]
+        out.append({"url": url, "ctx": f"{before} {anchor}".strip()})
+    return out[:60]
+
+
 def count_images(h: str) -> int:
     return len(re.findall(r"(?i)<img\b", h or ""))
 
@@ -191,7 +209,7 @@ async def habr_article(s: aiohttp.ClientSession, item: Item) -> Article:
             a.author_url = f"https://habr.com/ru/users/{a.author_alias}/"
         a.published = _ts(j.get("timePublished") or "") or a.published
         body = j.get("textHtml") or ""
-        a.text, a.images = html_to_text(body), count_images(body)
+        a.text, a.images, a.links = html_to_text(body), count_images(body), extract_links(body)
         if j.get("isCorporative") is not None:
             a.corporate = bool(j["isCorporative"]) or a.corporate
         a.translation = any((l.get("type") if isinstance(l, dict) else l) in ("translation", "Перевод")
@@ -229,6 +247,7 @@ async def vc_article(s: aiohttp.ClientSession, item: Item) -> Article:
         au = e.get("author") or {}
         a.author = au.get("name") or a.author
         a.author_url = au.get("url") or (f"https://vc.ru/id{au['id']}" if au.get("id") else "")
+        a.author_id = str(au.get("id") or "")
         sub = e.get("subsite") or {}
         # тип подсайта: 1 — пользователь; 2 и др. — компания/сообщество. Пишет компания от своего имени → блог компании
         if au.get("type") not in (None, 1) or (sub.get("id") and sub.get("id") == au.get("id") and sub.get("type") not in (None, 1)):
@@ -241,7 +260,9 @@ async def vc_article(s: aiohttp.ClientSession, item: Item) -> Article:
             t = b.get("type")
             d = b.get("data") or {}
             if t in ("text", "header", "quote", "list", "incut"):
-                texts.append(html_to_text(json.dumps(d, ensure_ascii=False) if t == "list" else (d.get("text") or "")))
+                raw = json.dumps(d, ensure_ascii=False) if t == "list" else (d.get("text") or "")
+                texts.append(html_to_text(raw))
+                a.links += extract_links(raw)
             elif t in ("media", "image", "gallery"):
                 imgs += max(1, len(d.get("items") or []))
         a.text, a.images = "\n\n".join(x for x in texts if x), imgs
@@ -290,6 +311,7 @@ async def _from_page(s: aiohttp.ClientSession, a: Article):
     m = re.search(r"(?is)<article[^>]*>(.*?)</article>", h)
     body = m.group(1) if m else h
     a.text, a.images = html_to_text(body), count_images(body)
+    a.links = a.links or extract_links(body)
     if re.search(r"(?i)tm-publication-label_variant-translation|>\s*Перевод\s*<", h):
         a.translation = True
     if "habr.com" in a.url and re.search(r"(?i)Блог компании", h):

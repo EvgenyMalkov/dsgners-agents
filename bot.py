@@ -25,7 +25,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 dp = Dispatcher()
 # PR-агент: команды /pr_* регистрируем первыми — раньше общего обработчика текста
 from core.pr import jobs as pr_jobs, tg as pr_tg  # noqa: E402
-from core.pr.tg import pr_digest, pr_scan, pr_src, pr_status, pr_test  # noqa: E402,F401
+from core.pr.tg import (pr_author, pr_digest, pr_login, pr_outreach, pr_pause, pr_report, pr_resume,  # noqa: E402,F401
+                        pr_scan, pr_src, pr_status, pr_stop, pr_test)
 pr_tg.register(dp)
 WAIT_REASON: dict[int, str] = {}
 MSG_JOB: dict[int, str] = {}      # message_id сообщений с результатом -> job_id (ответ на них = правка)  # user_id -> job_id, ждём причину переделки
@@ -849,8 +850,10 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
     elif name == "pr":
         rows = [[_b("📰 Дайджест сейчас", "c:/pr_digest"), _b("🔄 Собрать сейчас", "c:/pr_scan")],
-                [_b("📊 Статус", "c:/pr_status"), _b("🧪 Проверить источники", "c:/pr_test")],
-                [_b("📚 Источники", "c:/pr_src list")], back]
+                [_b("🔗 Разобрать статью", "i:pr_author"), _b("📊 Статус", "c:/pr_status")],
+                [_b("📈 Итоги недели", "c:/pr_report"), _b("🧪 Проверить источники", "c:/pr_test")],
+                [_b("⏸ Пауза отправки", "c:/pr_pause"), _b("▶️ Продолжить", "c:/pr_resume")],
+                [_b("📚 Источники", "c:/pr_src list"), _b("👤 Аккаунт менеджера", "c:/pr_login")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
                 [_b("Ежедневная", "c:/seo_scan daily"), _b("Недельный отчёт", "c:/seo_scan weekly")],
@@ -878,6 +881,7 @@ ASK = {"article": "✍️ Тема статьи? Можно добавить с�
        "seo_page": "📄 Пришли адрес страницы — быстрая проверка без ИИ, бесплатно.",
        "ws": "📈 Фраза для Вордстата. Несколько через « | » — сравню их.",
        "ws_parse": "🧲 По какой фразе собрать семантику? Фразы лягут в базу SEO-шника.",
+       "pr_author": "🔗 Пришли ссылку на статью с vc.ru или Хабра — оценю, найду контакты и напишу черновик.",
        "geo_check": "🤖 Какой запрос проверить в нейроответах? Покажу ответ, источники, есть ли мы и нашу позицию в выдаче."}
 HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLSX из Вордстата — фразы попадут в базу SEO-шника."}
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
@@ -885,7 +889,9 @@ CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_sca
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
         "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick",
         "geo_check": "geo_check", "geo_q": "geo_q", "geo_report": "geo_report", "geo_fix": "geo_fix",
-        "pr_digest": "pr_digest", "pr_scan": "pr_scan", "pr_status": "pr_status", "pr_test": "pr_test", "pr_src": "pr_src"}
+        "pr_digest": "pr_digest", "pr_scan": "pr_scan", "pr_status": "pr_status", "pr_test": "pr_test", "pr_src": "pr_src",
+        "pr_author": "pr_author", "pr_report": "pr_report", "pr_pause": "pr_pause", "pr_resume": "pr_resume",
+        "pr_login": "pr_login", "pr_outreach": "pr_outreach", "pr_stop": "pr_stop"}
 
 
 async def run_cmd(m: Message, user, text: str):
