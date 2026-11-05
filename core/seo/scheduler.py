@@ -4,6 +4,7 @@ hourly     — каждый час
 new_pages  — каждые 30 минут
 daily      — каждый день после 08:30
 weekly     — по понедельникам после 09:00
+geo        — по понедельникам после полного обхода: нейроответы
 
 Время последних запусков хранится в data/seo.db, поэтому перезапуск бота (автообновление) расписание не сбивает.
 Задачи одного вида не накладываются; недельный обход идёт в фоне и не мешает часовым проверкам.
@@ -47,6 +48,11 @@ def due(name: str, now: dt.datetime | None = None) -> bool:
         return now.weekday() == 1 and now.hour >= 10 and (not last or _local(last).date() < now.date())
     if name == "monthly":
         return now.day == 1 and now.hour >= 10 and (not last or _local(last).strftime("%Y-%m") < now.strftime("%Y-%m"))
+    if name == "geo":            # понедельник, после полного обхода (или с 13:00, если обход затянулся/упал)
+        if now.weekday() != 0 or now.hour < 9 or (last and _local(last).date() >= now.date()):
+            return False
+        wk = store.last_run("weekly")
+        return "weekly" not in _running and ((wk and _local(wk).date() == now.date()) or now.hour >= 13)
     if name == "weekly":
         if now.weekday() != 0 or now.hour < 9:
             return False
@@ -59,6 +65,7 @@ JOBS = {
     "new_pages": monitor.new_pages,
     "daily": monitor.daily,
     "weekly": monitor.weekly,
+    "geo": monitor.geo_weekly,
     "monthly": monitor.monthly,
     "content_plan": monitor.content_plan,
     "bulk": lambda: __import__("core.seo.bulk", fromlist=["tick"]).tick(monitor.say),
@@ -92,12 +99,12 @@ async def loop():
         return
     await asyncio.sleep(20)  # дать боту подняться
     # robots.txt нужен new_pages, чтобы найти sitemap — поэтому часовая проверка первой
-    order = ["hourly", "new_pages", "daily", "weekly", "monthly", "content_plan", "bulk"]
+    order = ["hourly", "new_pages", "daily", "weekly", "geo", "monthly", "content_plan", "bulk"]
     while True:
         for name in order:
             try:
                 if name not in _running and due(name):
-                    if name in ("weekly", "monthly", "bulk"):
+                    if name in ("weekly", "geo", "monthly", "bulk"):
                         asyncio.create_task(run(name))   # долгие — в фоне
                     else:
                         await run(name)
@@ -111,7 +118,7 @@ async def loop():
 def schedule_info() -> dict:
     """Что, когда и кто делает сам — с последним запуском и тем, включено ли."""
     from core import config, site_api
-    from core.seo import author_tips, bulk
+    from core.seo import author_tips, bulk, geo
     runs = {r["name"]: r for r in store.runs()}
     auto = monitor.autopilot()
 
@@ -122,10 +129,10 @@ def schedule_info() -> dict:
         return {"ts": r["ts"], "ok": bool(r["ok"]), "note": r["note"]}
 
     seo = [
-        {"when": "каждый час", "what": "Сайт отвечает, robots.txt не закрыл сайт, SSL не истекает",
+        {"when": "каждый час", "what": "Сайт отвечает, robots.txt не закрыл сайт и ИИ-ботов, SSL не истекает",
          "out": "алерт в Telegram, только если сломалось или починилось", "ai": False, "on": config.SEO_MONITOR,
          "last": last("hourly")},
-        {"when": "каждые 30 минут", "what": "Новые адреса в sitemap: проверка страницы, переобход в Яндексе, IndexNow",
+        {"when": "каждые 30 минут", "what": "Новые адреса в sitemap: проверка страницы, переобход в Яндексе, IndexNow (Яндекс и Bing)",
          "out": "алерт только при критичной ошибке на новой странице", "ai": False, "on": config.SEO_MONITOR,
          "last": last("new_pages")},
         {"when": "каждые 30 минут", "what": "Новая статья автора → проверка и письмо автору с советами (~1–2 ¢)",
@@ -139,6 +146,10 @@ def schedule_info() -> dict:
         {"when": "понедельник 09:00", "what": "Полный обход сайта, недельный отчёт",
          "out": "файл отчёта" + (" + список задач от агента" if auto else ""), "ai": False, "on": config.SEO_MONITOR,
          "last": last("weekly")},
+        {"when": "понедельник, после обхода", "what": "Нейроответы (GEO): набор запросов через генеративный поиск Яндекса "
+         "(и Perplexity/ChatGPT, если включены) + обычная выдача; трафик из ИИ в Метрике",
+         "out": "блок «🤖 Нейроответы» в Telegram", "ai": False, "on": geo.enabled(), "switch": "/geo_check",
+         "last": last("geo")},
         {"when": "вторник 10:00", "what": "Контент-план на неделю: что писать и что обновлять", "out": "план тебе на «Ок»",
          "ai": True, "on": auto, "switch": "/seo_auto on|off", "last": last("content_plan")},
         {"when": "1-е число 10:00", "what": "Разбор результатов за месяц и новые правила для агента",

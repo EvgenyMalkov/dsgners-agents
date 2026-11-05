@@ -78,6 +78,15 @@ WORDSTAT_RPS = float(os.getenv("WORDSTAT_RPS", "3"))
 WORDSTAT_SEEDS = [x.strip() for x in (os.getenv("WORDSTAT_SEEDS") or "веб дизайн,ux ui дизайн,графический дизайн,figma,портфолио дизайнера,дизайнер интерфейсов,"
     "нейросети для дизайнеров,работа дизайнером,курсы дизайна,айдентика").split(",") if x.strip()]
 
+# GEO — видимость в нейроответах (core/seo/geo.py). Ключ Яндекса — тот же, что у Вордстата
+GEO_ENABLED = os.getenv("GEO_ENABLED", "1") == "1"
+GEO_ENGINES = [x.strip().lower() for x in os.getenv("GEO_ENGINES", "yandex").split(",") if x.strip()]
+GEO_QUERIES_MAX = int(os.getenv("GEO_QUERIES_MAX", "50"))
+PERPLEXITY_API_KEY = os.getenv("PERPLEXITY_API_KEY", "")
+GEO_PERPLEXITY_MODEL = os.getenv("GEO_PERPLEXITY_MODEL", "sonar")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEO_OPENAI_MODEL = os.getenv("GEO_OPENAI_MODEL", "gpt-4.1-mini")
+
 # API сайта dsgners (docs/site-api.md): запись SEO-полей и письма авторам после «Ок» владельца
 SITE_API_URL = os.getenv("SITE_API_URL", "")      # напр. https://dsgners.ru/api/agents
 SITE_API_TOKEN = os.getenv("SITE_API_TOKEN", "")

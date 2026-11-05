@@ -124,6 +124,14 @@ TOOLS = [
         }, "required": ["action"]},
     },
     {
+        "name": "geo_check",
+        "description": "Нейроответ по запросу (генеративный поиск Яндекса через API — приближение к Алисе/Нейро; "
+                       "плюс Perplexity/ChatGPT, если подключены): есть ли ответ, какие сайты он цитирует, "
+                       "цитирует ли дизайнерс и наша позиция в обычной выдаче Яндекса. Используй, чтобы понять, "
+                       "кого цитирует ответ и чем они лучше, перед статьёй и SEO-пакетом. Нет ключей — вернёт ошибку, не выдумывай.",
+        "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+    },
+    {
         "name": "propose_topics",
         "description": "Сдать контент-план: список тем на согласование. После «Ок» владельца по каждой теме "
                        "автоматически запустится написание плана статьи. После propose_topics — save_document и finish.",
@@ -170,7 +178,13 @@ def system_extra() -> str:
     return (f"# Данные, которые у тебя есть\n"
             f"- Мониторинг сайта {config.SEO_SITE} знает {len(store.known_urls())} адресов из sitemap.\n"
             f"- Яндекс Вебмастер и Метрика: {'подключены (данные приходят в отчётах мониторинга)' if apis.has_yandex() else 'не подключены — частотности, позиции и трафик не выдумывай'}.\n"
-            f"- Вордстат: {'API подключён — инструмент wordstat (top, dynamics, regions, compare, parse); главный запрос выбирай сравнением формулировок, сезонность смотри в dynamics' if _ws_on() else 'API не подключён — только выгрузки через keyword_data'}.")
+            f"- Вордстат: {'API подключён — инструмент wordstat (top, dynamics, regions, compare, parse); главный запрос выбирай сравнением формулировок, сезонность смотри в dynamics' if _ws_on() else 'API не подключён — только выгрузки через keyword_data'}.\n"
+            f"- Нейроответы: {'инструмент geo_check — кого цитирует ответ Яндекса и есть ли там дизайнерс' if _geo_on() else 'не подключены — не утверждай, кого цитирует Алиса'}.")
+
+
+def _geo_on() -> bool:
+    from core.seo import geo
+    return geo.enabled()
 
 
 def _ws_on() -> bool:
@@ -368,6 +382,23 @@ async def wordstat(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": txt[:12000]}]
 
 
+async def geo_check(inp: dict, ctx: Ctx):
+    from core.seo import geo
+    if not geo.enabled():
+        return [{"type": "text", "text": "Нейроответы не подключены (" + geo.why_off() + "). "
+                                         "Не утверждай, кого цитирует ответ."}]
+    q = (inp.get("query") or "").strip()
+    if ctx.progress:
+        await ctx.progress(f"Нейроответ: «{q}»")
+    out = []
+    for e in geo.engines():
+        r = await geo.check(q, e)
+        out.append(geo.fmt_one(r))
+        if r.get("text"):
+            out.append("Полный ответ:\n" + r["text"][:3000])
+    return [{"type": "text", "text": "\n\n".join(out)[:12000]}]
+
+
 async def propose_topics(inp: dict, ctx: Ctx):
     from core.seo import monitor
     topics = [t for t in inp.get("topics", []) if t.get("title")][:10]
@@ -417,7 +448,7 @@ async def set_author_letter(inp: dict, ctx: Ctx):
     return [{"type": "text", "text": "Письмо сохранено — после «Ок» уйдёт автору."}]
 
 
-HANDLERS = {"set_article": set_article, "set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "wordstat": wordstat, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
+HANDLERS = {"set_article": set_article, "set_seo_fields": set_seo_fields, "set_author_letter": set_author_letter, "submit_plan": submit_plan, "keyword_data": keyword_data, "wordstat": wordstat, "geo_check": geo_check, "propose_topics": propose_topics, "propose_rules": propose_rules,"check_site": check_site, "check_page": check_page, "related_pages": related_pages,
             "validate_jsonld": validate_jsonld}
 
 

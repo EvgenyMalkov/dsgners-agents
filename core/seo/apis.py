@@ -163,6 +163,32 @@ async def indexnow(urls: list[str]) -> str:
         return "нет ключа INDEXNOW_KEY" if not key else "нечего отправлять"
     host = config.SEO_SITE
     payload = {"host": host, "key": key, "keyLocation": f"https://{host}/{key}.txt", "urlList": urls[:10000]}
+    out = []
+    # Яндекс и Bing — отдельно: поиск ChatGPT опирается на индекс Bing
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30)) as s:
-        async with s.post("https://yandex.com/indexnow", json=payload) as r:
-            return f"HTTP {r.status}"
+        for name, ep in (("Яндекс", "https://yandex.com/indexnow"), ("Bing", "https://www.bing.com/indexnow")):
+            try:
+                async with s.post(ep, json=payload) as r:
+                    out.append(f"{name} HTTP {r.status}")
+            except Exception as e:
+                out.append(f"{name} ошибка {e}")
+    return ", ".join(out)
+
+
+# ---------- Метрика: трафик из ИИ-ассистентов ----------
+async def ai_traffic(date1: dt.date, date2: dt.date, limit=50) -> tuple[int, dict[str, int]] | None:
+    """Визиты с ИИ-ассистентов (ChatGPT, Perplexity, Gemini, Алиса и др.) по реферу и utm_source:
+    (всего, {страница входа: визиты}). Переходы из Нейро внутри поиска Яндекса сюда не попадают."""
+    if not (has_yandex() and config.METRIKA_COUNTER_ID):
+        return None
+    from core.seo.geo import AI_REFERRERS
+    cond = " OR ".join([f"ym:s:referer=@'{d}'" for d in AI_REFERRERS] + ["ym:s:UTMSource=@'chatgpt'"])
+    params = {"ids": config.METRIKA_COUNTER_ID, "metrics": "ym:s:visits", "dimensions": "ym:s:startURL",
+              "filters": f"({cond})", "date1": date1.isoformat(), "date2": date2.isoformat(),
+              "limit": str(limit), "sort": "-ym:s:visits"}
+    data = await _get(MK, params)
+    pages = {}
+    for row in data.get("data", []):
+        url = (row.get("dimensions") or [{}])[0].get("name") or ""
+        pages[url] = int((row.get("metrics") or [0])[0])
+    return int((data.get("totals") or [0])[0]), pages

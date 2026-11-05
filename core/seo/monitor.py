@@ -131,6 +131,12 @@ async def hourly() -> str:
         await alert("robots_block", blocked,
                     "robots.txt ЗАКРЫЛ ВЕСЬ САЙТ от поисковиков (Disallow: /). Если это не специально — срочно вернуть.",
                     "robots.txt больше не закрывает сайт")
+        from core.seo import geo
+        bots = geo.blocked_bots(rob.html)
+        await alert("robots_ai_bots", bool(bots),
+                    "robots.txt закрыл сайт для " + ", ".join(bots) + " — эти боты собирают выдачу и нейроответы "
+                    "(Алиса, ChatGPT, Perplexity). Если это не специально — открыть.",
+                    "robots.txt снова открыт для поисковых и ИИ-ботов")
         prev = store.get("robots_txt")
         if prev is not None and prev.strip() != rob.html.strip():
             import difflib
@@ -193,7 +199,7 @@ def _optimized_today() -> int:
     return int(store.get(f"optimized:{day}", 0))
 
 
-def start_optimize(url: str, rep: page.PageReport, auto: bool) -> str | None:
+def start_optimize(url: str, rep: page.PageReport, auto: bool, geo_query: str = "") -> str | None:
     """Поставить SEO-агенту задачу оформить статью."""
     if not _start_job:
         return None
@@ -203,7 +209,11 @@ def start_optimize(url: str, rep: page.PageReport, auto: bool) -> str | None:
            "и, если в тексте есть что улучшить, — короткие рекомендации автору (документ «author-letter»).")
     full = (f"{task}\n\nИспользуй навык optimize-article.\n{who}\n"
             f"{'Статья только что вышла — найдена мониторингом.' if auto else ''}\n\n"
-            f"# Что уже есть на странице (автопроверка)\n{rep.summary()}")
+            + (f"GEO: по запросу «{geo_query}» статья в топ-10 Яндекса, но нейроответ её не цитирует. "
+               "Сделай упор на GEO-проверку навыка: прямой лид-ответ на этот запрос, конкретные факты, вопросы. "
+               "Перед этим посмотри `geo_check` по запросу — кого цитирует ответ и чем они лучше.\n\n"
+               if geo_query else "")
+            + f"# Что уже есть на странице (автопроверка)\n{rep.summary()}")
     jid = _start_job("seo", task, "monitor" if auto else "telegram", full)
     store.mark_optimized(url)
     if auto:
@@ -348,7 +358,39 @@ async def daily() -> str:
                         f"поисковый трафик вернулся: {cur} визитов вчера")
     except Exception as e:
         notes.append(f"Метрика: ошибка {e}")
+    try:
+        y = today - dt.timedelta(days=1)
+        cur = await apis.ai_traffic(y, y)
+        prev = await apis.ai_traffic(y - dt.timedelta(days=7), y - dt.timedelta(days=7))
+        if cur is not None:
+            c, p = cur[0], (prev[0] if prev else 0)
+            store.put_metric(y.isoformat(), "ai_visits", c)
+            notes.append(f"из ИИ вчера {c} (неделю назад {p})")
+            await alert("ai_drop", bool(p >= 20 and c < p * 0.5),
+                        f"переходы из ИИ-ассистентов вчера {c} — вдвое меньше, чем неделю назад ({p})",
+                        f"переходы из ИИ-ассистентов вернулись: {c} вчера")
+    except Exception as e:
+        notes.append(f"трафик из ИИ: ошибка {e}")
     return "; ".join(notes)
+
+
+# ---------------- раз в неделю: нейроответы (GEO) ----------------
+
+async def geo_weekly() -> str:
+    """Прогон набора запросов по нейроответам → блок GEO владельцу. Без ИИ Claude — только API движков."""
+    from core.seo import geo
+    if not geo.enabled():
+        return "GEO выключен: " + geo.why_off()
+    if time.time() - (store.get("geo_seeded") or 0) > 28 * 86400:
+        note = geo.seed(force=bool(geo.queries()))     # раз в месяц пересобрать автоматическую часть набора
+        log.info("geo seed: %s", note)
+    res = await geo.run_all()
+    text, _ = await geo.report(res["week"])
+    out = config.OUTBOX / "seo-weekly" / f"geo-{res['week']}.md"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(text, "utf-8")
+    await say(text)
+    return f"проверено {res['checked']}, ошибок {res['errors']}"
 
 
 # ---------------- раз в неделю: полный обход ----------------
@@ -515,7 +557,13 @@ def status_text() -> str:
     lines.append("Советы авторам в день публикации: " + ("включены" if author_tips.enabled() else "выключены")
                  + f" (сегодня проверено статей: {author_tips._today_count()}/{config.SEO_AUTHOR_TIPS_PER_DAY})")
     lines.append("Вебмастер и Метрика: " + ("подключены" if apis.has_yandex() else "нет токена"))
-    lines.append("IndexNow: " + ("подключён" if config.INDEXNOW_KEY else "нет ключа"))
+    lines.append("IndexNow: " + ("подключён (Яндекс и Bing)" if config.INDEXNOW_KEY else "нет ключа"))
+    from core.seo import geo
+    last = store.get("geo_last") or {}
+    lines.append("Нейроответы (GEO): " + (
+        f"движки {', '.join(geo.ENGINE_NAMES[e] for e in geo.engines())}, запросов в наборе {len(geo.queries())}"
+        + (f", последняя проверка {last['week']} (ошибок {last['errors']} из {last['checked']})" if last else ", проверок ещё не было")
+        if geo.enabled() else "выключено — " + geo.why_off()))
     from core.seo import keywords
     from core.seo import wordstat
     lines.append(f"Вордстат: {keywords.count()} фраз в базе" if keywords.count() else "Вордстат: фраз в базе нет")
@@ -672,6 +720,13 @@ async def content_plan() -> str:
                 L.append("")
         except Exception as e:
             L.append(f"_Метрика недоступна: {e}_")
+    try:
+        from core.seo import geo
+        gs = geo.plan_section()
+        if gs:
+            L.append(gs)
+    except Exception as e:
+        L.append(f"_GEO-данные недоступны: {e}_")
     from core.seo import wordstat
     if wordstat.enabled():
         try:

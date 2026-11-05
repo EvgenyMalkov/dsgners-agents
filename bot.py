@@ -115,7 +115,7 @@ async def spend_cmd(m: Message):
     await m.answer(f"Расход за месяц: ${spend.this_month():.2f} из ${config.MONTHLY_LIMIT_USD:.0f}\n" + "\n".join(parts))
 
 
-SCAN = {"hourly": "hourly", "new": "new_pages", "new_pages": "new_pages", "daily": "daily", "weekly": "weekly",
+SCAN = {"hourly": "hourly", "new": "new_pages", "new_pages": "new_pages", "daily": "daily", "weekly": "weekly", "geo": "geo",
         "monthly": "monthly", "month": "monthly"}
 
 
@@ -132,10 +132,10 @@ async def seo_scan(m: Message):
     arg = (m.text or "").partition(" ")[2].strip().lower() or "hourly"
     name = SCAN.get(arg)
     if not name:
-        await m.answer("Варианты: /seo_scan hourly | new | daily | weekly | monthly")
+        await m.answer("Варианты: /seo_scan hourly | new | daily | weekly | geo | monthly")
         return
-    if name in ("weekly", "monthly"):
-        await m.answer("Запустил — это может занять до часа, отчёт пришлю." if name == "weekly"
+    if name in ("weekly", "monthly", "geo"):
+        await m.answer("Запустил — это может занять до часа, отчёт пришлю." if name in ("weekly", "geo")
                        else "Запустил разбор за месяц — отчёт и выводы пришлю.")
         asyncio.create_task(seo_scheduler.run(name))
         return
@@ -487,6 +487,100 @@ async def ws_parse(m: Message):
                    + "\n".join(f"{x['count']:>8}  {x['phrase']}" for x in r["top"][:20]))
 
 
+@dp.message(Command("geo_check"))
+async def geo_check(m: Message):
+    """/geo_check — прогнать весь набор по нейроответам; /geo_check запрос — один запрос."""
+    if not is_owner(m):
+        return
+    from core.seo import geo
+    if not geo.enabled():
+        await m.answer("Нейроответы (GEO) не подключены: " + geo.why_off())
+        return
+    arg = (m.text or "").partition(" ")[2].strip()
+    if arg:
+        await m.answer(f"Спрашиваю нейросети: «{arg}»…")
+        for e in geo.engines():
+            r = await geo.check(arg, e, use_cache=False)
+            await m.answer(geo.fmt_one(r)[:3900], disable_web_page_preview=True)
+        return
+    if not geo.queries():
+        await m.answer("Набора запросов ещё нет — собираю стартовый: " + geo.seed())
+    n = len(geo.queries()) * len(geo.engines())
+    await m.answer(f"Прогоняю {len(geo.queries())} запросов × {len(geo.engines())} движк. — это ~{max(1, n * 3 // 60)} мин. "
+                   "Пришлю блок «🤖 Нейроответы».")
+
+    async def job():
+        await m.answer(f"🔎 GEO: {await seo_scheduler.run('geo')}")
+    asyncio.create_task(job())
+
+
+@dp.message(Command("geo_q"))
+async def geo_q(m: Message):
+    """/geo_q list | add запрос | del запрос | seed — набор запросов для мониторинга нейроответов."""
+    if not is_owner(m):
+        return
+    from core.seo import geo
+    cmd, _, arg = (m.text or "").partition(" ")[2].strip().partition(" ")
+    cmd, arg = cmd.lower(), arg.strip()
+    if cmd == "add" and arg:
+        out = [geo.add_query(q) for q in arg.split("|") if q.strip()]
+        await m.answer("\n".join(out))
+    elif cmd == "del" and arg:
+        await m.answer("Удалил." if geo.del_query(arg) else "Такого запроса в наборе нет.")
+    elif cmd == "seed":
+        await m.answer(geo.seed(force=True) + " (ручные запросы не трогал)")
+    else:
+        qs = geo.queries()
+        if not qs:
+            await m.answer("Набор пуст. /geo_q seed — собрать стартовый (бренд + Вебмастер + Вордстат), "
+                           "/geo_q add запрос — добавить свой.")
+            return
+        L = [f"🤖 Набор запросов для нейроответов: {len(qs)} (максимум {config.GEO_QUERIES_MAX})"]
+        for t, name in geo.TYPES.items():
+            part = [q for q in qs if q["type"] == t]
+            if part:
+                L.append(f"\n{name}:")
+                L += [f"∙ {q['query']}" + (" ✍️" if q["source"] == "manual" else "") for q in part]
+        L.append("\n✍️ — добавлены вручную. /geo_q add запрос (несколько через « | »), /geo_q del запрос, "
+                 "/geo_q seed — пересобрать автоматическую часть")
+        await m.answer("\n".join(L)[:3900])
+
+
+@dp.message(Command("geo_report"))
+async def geo_report(m: Message):
+    if not is_owner(m):
+        return
+    from core.seo import geo
+    text, _ = await geo.report()
+    await m.answer((text + "\n\n" + geo.history_text(8))[:3900], disable_web_page_preview=True)
+
+
+@dp.message(Command("geo_fix"))
+async def geo_fix(m: Message):
+    """/geo_fix N — оформить статью-кандидата N из блока «в топ-10, но не в нейроответе»."""
+    if not is_owner(m):
+        return
+    from core.seo import page, store as seo_store
+    cand = seo_store.get("geo_candidates") or []
+    arg = (m.text or "").partition(" ")[2].strip()
+    if not cand:
+        await m.answer("Кандидатов нет — сначала /geo_check.")
+        return
+    if not arg.isdigit() or not 1 <= int(arg) <= len(cand):
+        await m.answer("Кандидаты:\n" + "\n".join(f"{i}. «{c['query']}» — поз. {c['pos']}, {c['url']}"
+                                                  for i, c in enumerate(cand, 1)) + "\n\nПример: /geo_fix 1")
+        return
+    c = cand[int(arg) - 1]
+    rep = await page.check_url(c["url"], is_article=True)
+    try:
+        seo_monitor.start_optimize(c["url"], rep, auto=False, geo_query=c["query"])
+    except ValueError as e:
+        await m.answer(str(e))
+        return
+    await m.answer(f"🔎 SEO-шник взял статью под нейроответ «{c['query']}». Пришлю пакет"
+                   + ("." if c.get("own") else " и письмо автору."))
+
+
 @dp.message(Command("ws_map"))
 async def ws_map(m: Message):
     """Карта спроса по разделам SEO-стратегии: курсы, студии по городам, глоссарий, инструменты, хабы, вакансии."""
@@ -742,6 +836,8 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                  _b(f"✉️ Советы авторам: {_onoff(author_tips.enabled())}", "t:tips")],
                 [_b("⏸ Остановить SEO-агента", "c:/seo_stop")],
                 [_b("📈 Вордстат: фраза", "i:ws"), _b("🧲 Собрать семантику", "i:ws_parse")],
+                [_b("🤖 Нейроответы", "c:/geo_report"), _b("🤖 Проверить запрос", "i:geo_check"),
+                 _b("Набор запросов", "c:/geo_q list")],
                 [_b("🗺 Карта спроса по разделам", "c:/ws_map"), _b("🧭 Хабы по темам сайта", "c:/ws_hubs")],
                 [_b("📊 Посещаемость тем", "c:/topics_traffic"), _b("🗂 База под хабы", "c:/hub_inventory")],
                 [_b("🤖 Разложить базу моделью", "c:/hub_classify"), _b("Ход раскладки", "c:/hub_classify status")],
@@ -773,12 +869,14 @@ ASK = {"article": "✍️ Тема статьи? Можно добавить с�
        "seo_fix": "🛠 Пришли адрес статьи — SEO-шник подготовит title, description, разметку, alt и ссылки.",
        "seo_page": "📄 Пришли адрес страницы — быстрая проверка без ИИ, бесплатно.",
        "ws": "📈 Фраза для Вордстата. Несколько через « | » — сравню их.",
-       "ws_parse": "🧲 По какой фразе собрать семантику? Фразы лягут в базу SEO-шника."}
+       "ws_parse": "🧲 По какой фразе собрать семантику? Фразы лягут в базу SEO-шника.",
+       "geo_check": "🤖 Какой запрос проверить в нейроответах? Покажу ответ, источники, есть ли мы и нашу позицию в выдаче."}
 HINTS = {"wordstat": "Просто пришли сюда файл CSV или XLSX из Вордстата — фразы попадут в базу SEO-шника."}
 CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_scan", "seo_bulk": "seo_bulk",
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
-        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick"}
+        "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick",
+        "geo_check": "geo_check", "geo_q": "geo_q", "geo_report": "geo_report", "geo_fix": "geo_fix"}
 
 
 async def run_cmd(m: Message, user, text: str):
