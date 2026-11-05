@@ -23,6 +23,10 @@ from core.web import start_web
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 dp = Dispatcher()
+# PR-агент: команды /pr_* регистрируем первыми — раньше общего обработчика текста
+from core.pr import jobs as pr_jobs, tg as pr_tg  # noqa: E402
+from core.pr.tg import pr_digest, pr_scan, pr_src, pr_status, pr_test  # noqa: E402,F401
+pr_tg.register(dp)
 WAIT_REASON: dict[int, str] = {}
 MSG_JOB: dict[int, str] = {}      # message_id сообщений с результатом -> job_id (ответ на них = правка)  # user_id -> job_id, ждём причину переделки
 WAIT_BULK: set[int] = set()       # ждём комментарий к пробной партии массового SEO
@@ -821,7 +825,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
     if name == "main":
         rows = [[_b("🎨 Графический дизайнер", "a:designer")],
                 [_b("🖥 Веб-дизайнер", "a:webdesigner"), _b("📣 SMM", "a:smm")],
-                [_b("🔎 SEO ▸", "m:seo")],
+                [_b("🔎 SEO ▸", "m:seo"), _b("🤝 PR ▸", "m:pr")],
                 [_b("⚙️ Система ▸", "m:sys")]]
         if office_url():
             rows.insert(3, [InlineKeyboardButton(text="🏢 Открыть ИИ-офис", web_app=WebAppInfo(url=office_url()))])
@@ -843,6 +847,10 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("🤖 Разложить базу моделью", "c:/hub_classify"), _b("Ход раскладки", "c:/hub_classify status")],
                 [_b("🧩 Кластер «Брендинг»", "c:/cluster branding"), _b("📚 Подборки «Логотип»", "c:/cluster_pick logo")],
                 [_b("ℹ️ Загрузить выгрузку Вордстата", "h:wordstat")], back]
+    elif name == "pr":
+        rows = [[_b("📰 Дайджест сейчас", "c:/pr_digest"), _b("🔄 Собрать сейчас", "c:/pr_scan")],
+                [_b("📊 Статус", "c:/pr_status"), _b("🧪 Проверить источники", "c:/pr_test")],
+                [_b("📚 Источники", "c:/pr_src list")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
                 [_b("Ежедневная", "c:/seo_scan daily"), _b("Недельный отчёт", "c:/seo_scan weekly")],
@@ -862,7 +870,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-MENU_TITLES = {"main": HELP, "seo": "🔎 SEO-шник", "scan": "🔍 Какую проверку запустить?", "sys": "⚙️ Система",
+MENU_TITLES = {"main": HELP, "seo": "🔎 SEO-шник", "pr": "🤝 PR-агент: ищет авторов на vc.ru и Хабре, дайджест в 10:00", "scan": "🔍 Какую проверку запустить?", "sys": "⚙️ Система",
                "rules": "📏 Правила, выученные из твоих правок — чьи показать?",
                "rollback": "↩️ Вернуть предыдущую версию системы? Нужно, только если после обновления что-то сломалось."}
 ASK = {"article": "✍️ Тема статьи? Можно добавить ссылки на работы авторов, которые стоит показать.",
@@ -876,7 +884,8 @@ CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_sca
         "seo_stop": "seo_stop", "spend": "spend_cmd", "rules": "rules", "office": "office_link", "rollback": "rollback",
         "article": "article", "seo_fix": "seo_fix", "seo_page": "seo_page", "seo_auto": "seo_auto", "seo_tips": "seo_tips",
         "ws": "ws_cmd", "ws_parse": "ws_parse", "ws_map": "ws_map", "ws_hubs": "ws_hubs", "topics_traffic": "topics_traffic", "hub_inventory": "hub_inventory", "hub_classify": "hub_classify", "cluster": "cluster_cmd", "cluster_pick": "cluster_pick",
-        "geo_check": "geo_check", "geo_q": "geo_q", "geo_report": "geo_report", "geo_fix": "geo_fix"}
+        "geo_check": "geo_check", "geo_q": "geo_q", "geo_report": "geo_report", "geo_fix": "geo_fix",
+        "pr_digest": "pr_digest", "pr_scan": "pr_scan", "pr_status": "pr_status", "pr_test": "pr_test", "pr_src": "pr_src"}
 
 
 async def run_cmd(m: Message, user, text: str):
@@ -1294,10 +1303,12 @@ async def main():
     logging.info("ИИ-офис слушает порт %s", config.OFFICE_PORT)
     seo_monitor.setup(seo_notify, seo_start_job)
     asyncio.create_task(seo_scheduler.loop())
+    asyncio.create_task(pr_jobs.loop())
     if not config.TELEGRAM_BOT_TOKEN:
         logging.warning("Нет TELEGRAM_BOT_TOKEN — работает только офис")
         await asyncio.Event().wait()
     BOT = Bot(config.TELEGRAM_BOT_TOKEN)
+    pr_tg.setup(BOT)
     try:
         from aiogram.types import BotCommand
         await BOT.set_my_commands([BotCommand(command="menu", description="Меню"),

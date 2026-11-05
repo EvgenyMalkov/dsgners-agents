@@ -5,3 +5,5 @@ data/
 outbox/
 *.pyc
 .office_domain
+*.session
+*.session-journal

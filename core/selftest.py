@@ -21,6 +21,12 @@ async def main() -> int:
                        is_article=True)
     assert any(c == "no_description" for _, c, _ in rep.issues), "проверка страниц сломана"
     assert scheduler.JOBS and monitor.status_text()
+    from core.pr import jobs as pr_jobs, score as pr_score, sources as pr_sources  # noqa: F401 — PR-агент
+    items = pr_sources.parse_rss('<rss><channel><item><title>T</title><link>https://habr.com/ru/articles/123456/</link>'
+                                 '<pubDate>Wed, 04 Nov 2026 10:00:00 +0000</pubDate></item></channel></rss>')
+    assert items and items[0].url.endswith("/123456/"), "разбор RSS сломан"
+    art = pr_sources.Article(url="https://vc.ru/x/1", site="vc", title="Кейс", text="дизайн " * 2000, images=0)
+    assert pr_score.filter_reason(art, "vc") == "" and pr_jobs.status(), "фильтр PR сломан"
     for a, meta in AGENTS.items():
         if meta["active"]:
             tools = importlib.import_module(f"agents.{a}.tools")
