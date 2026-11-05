@@ -97,8 +97,9 @@ async def _rate_one(s, row: dict, kind: str, use_ai: bool = True) -> str:
         store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r,
                              reason="блог компании (Claude)" if r["author_kind"] == "company" else "школа (Claude)")
         return "rejected"
-    if not r.get("design", True):
-        store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r, reason="не про дизайн (Claude)")
+    if r.get("design_focus", 2) < 2 or not r.get("design", True):
+        store.update_article(row["id"], stage="rejected", ai=r["score"], ai_json=r,
+                             reason="дизайн — побочная тема (Claude)" if r.get("design_focus") == 1 else "не про дизайн (Claude)")
         return "rejected"
     store.update_article(row["id"], stage="scored", ai=r["score"], ai_json=r, total=score.total(r["score"], sig))
     return "scored"
@@ -128,6 +129,9 @@ async def scan() -> str:
                 store.set_source(src["id"], last_ts=time.time(), last_ok=0, last_note=f"ошибка: {e}"[:200])
                 feed_err.append(f"{src['title']}: {e}")
 
+        # оценки по старой рубрике (без design_focus) — переоценить
+        store.db().execute("UPDATE articles SET stage='new' WHERE stage='scored' AND ai_json NOT LIKE '%design_focus%'")
+        store.db().commit()
         rated = rejected = errors = 0
         budget_stop = False
         for row in store.by_stage("new", PER_RUN):

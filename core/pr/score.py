@@ -22,6 +22,7 @@ MODEL = config.env("PR_MODEL", "") or config.SEO_CLASSIFY_MODEL or config.MODEL
 MIN_CHARS = int(config.env("PR_MIN_CHARS", "5000"))
 MIN_IMAGES = int(config.env("PR_MIN_IMAGES", "5"))
 W_AI = float(config.env("PR_WEIGHT_AI", "0.7"))
+MIN_DESIGN_DENSITY = float(config.env("PR_MIN_DESIGN_DENSITY", "8"))   # дизайн-слов на 10 000 знаков
 
 DESIGN_WORDS = re.compile(
     r"(?i)дизайн|\bux\b|\bui\b|интерфейс|юзабилити|usability|figma|фигм|типограф|шрифт|айдентик|брендинг|логотип|"
@@ -42,7 +43,12 @@ def filter_reason(a: Article, kind: str) -> str:
     if len(AD_WORDS.findall(a.text)) >= 2:
         return "реклама"
     if kind != "habr" and not DESIGN_WORDS.search(f"{a.title}\n{a.text[:3000]}"):
-        return "не про дизайн"       # хабы Хабра и так про дизайн; общие ленты — проверяем
+        return "не про дизайн"       # общие ленты (vc) — в начале текста должно быть про дизайн
+    # в хабы дизайна часто попадают статьи разработчиков: проверяем, сколько текста про дизайн
+    hits = len(DESIGN_WORDS.findall(f"{a.title}\n{a.text}"))
+    per10k = hits * 10000 / max(len(a.text), 1)
+    if per10k < MIN_DESIGN_DENSITY and not DESIGN_WORDS.search(a.title):
+        return "мало про дизайн"
     return ""
 
 
@@ -78,7 +84,12 @@ SYSTEM = """Ты — редактор платформы дизайнерс (dsg
 
 Ещё определи:
 - author_kind: person — пишет конкретный человек от себя (дизайнер студии от своего имени — тоже person); company — блог компании, студии, сервиса; school — онлайн-школа или курсы;
-- design: true, если статья про дизайн в широком смысле (UX/UI, продукт, бренд, графика, иллюстрация, моушн, карьера и процессы дизайнера);
+- design_focus — насколько статья про дизайн:
+  2 — дизайн главная тема: работа дизайнера, UX/UI, продуктовый дизайн, исследования пользователей, бренд и айдентика, графика, иллюстрация, типографика, моушн, карьера и процессы дизайнера. Автор смотрит на задачу как дизайнер;
+  1 — дизайн побочный: статья про разработку, автоматизацию, ИИ-ботов, код, геймдев, аналитику, менеджмент — дизайн упомянут или есть раздел про интерфейс, но читать её будут не дизайнеры;
+  0 — не про дизайн.
+  Будь строгим: «разработчик сделал бота / автоматизировал отчёт / отладил игру» — это 1, даже если там есть шрифты или анимации.
+- design: true только если design_focus = 2;
 - type: кейс | мнение | гайд | новость | интервью | другое;
 - why: одна фраза до 140 знаков для владельца — чем статья сильная или слабая, конкретно про эту статью, без общих слов.
 
@@ -96,11 +107,12 @@ TOOL = {
             "useful": {"type": "integer", "minimum": 0, "maximum": 2},
             "no_ads": {"type": "integer", "minimum": 0, "maximum": 2},
             "author_kind": {"type": "string", "enum": ["person", "company", "school"]},
+            "design_focus": {"type": "integer", "minimum": 0, "maximum": 2},
             "design": {"type": "boolean"},
             "type": {"type": "string", "enum": ["кейс", "мнение", "гайд", "новость", "интервью", "другое"]},
             "why": {"type": "string"},
         },
-        "required": ["personal", "position", "specifics", "useful", "no_ads", "author_kind", "design", "type", "why"],
+        "required": ["personal", "position", "specifics", "useful", "no_ads", "author_kind", "design_focus", "design", "type", "why"],
     },
 }
 
