@@ -62,6 +62,16 @@ def by_designer_job(jid: str) -> tuple[str, dict] | None:
 
 def designer_task(flow: dict) -> str:
     shots = "\n".join(f"- {s}" for s in flow.get("shots", [])[:8])
+    if flow.get("media") == "video":
+        return (
+            "Сделай РОЛИК к посту в Telegram (навык «Ролики и анимации», render_motion): как работает то, о чём пост, "
+            "в реальном мобильном интерфейсе сайта — экраны бери из Figma (figma_find → figma_export, для прокрутки full: true). "
+            "Формат 4:5, 6–12 секунд, бесшовный цикл, подложка и шейпы из брендбука. Один ролик, имя var-1.\n\n"
+            f"Подпись на подложке (2–4 слова): {flow.get('image_title') or 'придумай коротко по тексту'}\n\n"
+            f"Текст поста:\n{flow.get('text', '')}\n"
+            + (f"\nЭкраны из Figma, уже выгруженные SMM-щиком (можно взять):\n{shots}\n" if shots else "")
+            + (f"\nHTML-прототип фичи: {flow['prototype']}\n" if flow.get("prototype") else "")
+        )
     return (
         "Сделай 3 РАЗНЫХ варианта картинки к посту в Telegram — владелец выберет один. Варианты должны заметно "
         "отличаться: разные шаблоны или композиции и палитры (например promo, promo-duo, showcase / карточка). "

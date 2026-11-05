@@ -857,7 +857,7 @@ async def text_task(m: Message):
         return
     if uid in WAIT_OWN and not m.text.startswith("/"):
         fid, _ = WAIT_OWN.pop(uid)
-        await go_design(fid, tg_html.clean(m.html_text)[0], m.answer)   # html_text сохраняет твой жирный/курсив
+        await ask_media(fid, tg_html.clean(m.html_text)[0], m.answer)   # html_text сохраняет твой жирный/курсив
         return
     if m.reply_to_message and not m.text.startswith("/"):
         hit = smm_flow.by_msg(m.reply_to_message.message_id)
@@ -896,11 +896,14 @@ async def send_post(chat, text: str, img: str | None = None, head: str = "", rep
     import html as _h
     body = (_h.escape(head) if head else "") + text
 
+    vid = bool(img) and str(img).lower().endswith(".mp4")
+    send_media = BOT.send_animation if vid else BOT.send_photo
+
     async def _go(t: str, mode):
         if img and Path(img).exists() and tg_html.visible_len(t) <= 1024:
-            return await BOT.send_photo(chat, FSInputFile(img), caption=t, parse_mode=mode, reply_markup=reply_markup)
+            return await send_media(chat, FSInputFile(img), caption=t, parse_mode=mode, reply_markup=reply_markup)
         if img and Path(img).exists():
-            await BOT.send_photo(chat, FSInputFile(img))
+            await send_media(chat, FSInputFile(img))
         return await BOT.send_message(chat, t, parse_mode=mode, reply_markup=reply_markup,
                                       link_preview_options=LinkPreviewOptions(is_disabled=bool(img)))
     try:
@@ -932,22 +935,41 @@ async def send_variants(job: dict):
     smm_flow.update(fid, msgs=msgs)
 
 
-async def go_design(fid: str, text: str, say):
+async def ask_media(fid: str, text: str, say):
+    """Текст выбран → что делаем к посту: 3 картинки, ролик или без медиа."""
     flow = smm_flow.get(fid)
     if not flow:
         await say("Этот выбор устарел — дай задачу SMM-щику заново.")
         return
-    if flow.get("designer_job"):
-        await say("Картинки по этому посту уже делаются — дождись их.")
-        return
-    flow = smm_flow.update(fid, text=text)
+    smm_flow.update(fid, text=text)
     j = office.get_job(flow["smm_job"]) if flow.get("smm_job") else None
     if j and j["status"] == "review":
         runner.approve(j["id"])
-    jid = runner.start_job("designer", f"3 картинки к посту: {flow.get('image_title') or flow['task']}"[:200],
+    await say("Текст принят. Что делаем к посту?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+        [_b("🖼 3 картинки на выбор", f"sm:{fid}:image"), _b("🎬 Ролик (видео/гифка)", f"sm:{fid}:video")],
+        [_b("📝 Без картинки", f"sm:{fid}:none")]]))
+
+
+async def go_design(fid: str, media: str, say):
+    flow = smm_flow.get(fid)
+    if not flow:
+        await say("Этот выбор устарел — дай задачу SMM-щику заново.")
+        return
+    if media == "none":
+        smm_flow.update(fid, image=None, media="none")
+        await send_final(fid)
+        return
+    if flow.get("designer_job") and office.get_job(flow["designer_job"]) and \
+            office.get_job(flow["designer_job"])["status"] in ("queued", "running"):
+        await say("Дизайнер уже работает над этим постом — дождись результата.")
+        return
+    flow = smm_flow.update(fid, media=media)
+    what = "Ролик к посту" if media == "video" else "3 картинки к посту"
+    jid = runner.start_job("designer", f"{what}: {flow.get('image_title') or flow['task']}"[:200],
                            source="telegram", full_task=smm_flow.designer_task(flow))
     smm_flow.update(fid, designer_job=jid)
-    await say("🎨 Текст принят. Графический дизайнер делает 3 картинки — пришлю на выбор.")
+    await say("🎬 Дизайнер делает ролик — это пара минут, пришлю." if media == "video"
+              else "🎨 Дизайнер делает 3 картинки — пришлю на выбор.")
 
 
 async def rework_variant(fid: str, style: str, comment: str, say):
@@ -974,21 +996,26 @@ def _flow_for_designer(job: dict):
 
 async def send_image_choice(job: dict):
     fid, flow = _flow_for_designer(job) or smm_flow.by_designer_job(job["id"])
-    imgs = [str(config.OUTBOX / f) for f in job["files"] if f.lower().endswith(IMG)][:6]
+    vids = [str(config.OUTBOX / f) for f in job["files"] if f.lower().endswith(".mp4")][:3]
+    imgs = vids or [str(config.OUTBOX / f) for f in job["files"] if f.lower().endswith(IMG)][:6]
     smm_flow.update(fid, images=imgs)
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [_b(f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))],
-        [_b("🔁 Переделать картинки", f"redo:{job['id']}")]])
+        [_b("Беру" if len(imgs) == 1 else f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))],
+        [_b("🔁 Переделать ролик" if vids else "🔁 Переделать картинки", f"redo:{job['id']}")],
+        [_b("🔄 Лучше картинки" if vids else "🔄 Лучше ролик", f"sm:{fid}:{'image' if vids else 'video'}")]])
     for uid in config.OWNER_IDS:
-        if len(imgs) == 1:
+        if vids:
+            for v in vids:
+                MSG_JOB[(await BOT.send_animation(uid, FSInputFile(v))).message_id] = job["id"]
+        elif len(imgs) == 1:
             MSG_JOB[(await BOT.send_photo(uid, FSInputFile(imgs[0]))).message_id] = job["id"]
         elif imgs:
             for sent in await BOT.send_media_group(uid, [InputMediaPhoto(media=FSInputFile(f), caption=str(i + 1))
                                                          for i, f in enumerate(imgs)]):
                 MSG_JOB[sent.message_id] = job["id"]
         sent = await BOT.send_message(uid, f"🎨 {job['caption'][:1200]}\n\n💸 ${job['cost']:.3f}\n\n"
-                                           "Какую картинку берём? Номер — по порядку в альбоме. "
-                                           "Правка — ответом на это сообщение.", reply_markup=kb)
+                                           + ("Берём этот ролик? " if vids else "Какую картинку берём? Номер — по порядку в альбоме. ")
+                                           + "Правка — ответом на это сообщение.", reply_markup=kb)
         MSG_JOB[sent.message_id] = job["id"]
 
 
@@ -996,14 +1023,15 @@ async def send_final(fid: str):
     flow = smm_flow.get(fid)
     ch = flow.get("channel") or ""
     rows = [[_b(f"🚀 Опубликовать в {ch}", f"sp:{fid}")]] if ch else []
-    rows.append([_b("🖼 Другая картинка", f"sc:{fid}")])
+    rows.append([_b("🖼 Сделать картинки", f"sm:{fid}:image"), _b("🎬 Сделать ролик", f"sm:{fid}:video")]
+                if flow.get("media") == "none" else [_b("↩️ Другой вариант", f"sc:{fid}")])
     note = "" if ch else "\n\n(канал не задан — это готовый черновик, перешли его в нужный канал)"
     for uid in config.OWNER_IDS:
-        await send_post(uid, flow["text"], flow["image"])
+        await send_post(uid, flow["text"], flow.get("image"))
         await BOT.send_message(uid, "✅ Готовый пост." + note, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
 
 
-@dp.callback_query(F.data.regexp(r"^s[veicp]:"))
+@dp.callback_query(F.data.regexp(r"^s[veicpm]:"))
 async def smm_cb(c: CallbackQuery):
     if not is_owner(c):
         return
@@ -1014,7 +1042,9 @@ async def smm_cb(c: CallbackQuery):
         return
     await c.answer()
     if kind == "sv":
-        await go_design(fid, flow["variants"][rest[0]], c.message.answer)
+        await ask_media(fid, flow["variants"][rest[0]], c.message.answer)
+    elif kind == "sm":
+        await go_design(fid, rest[0], c.message.answer)
     elif kind == "se":
         WAIT_OWN[c.from_user.id] = (fid, rest[0])
         await c.message.answer("✏️ Пришли текст поста целиком — можно скопировать вариант выше и поправить. Возьму как есть.")
@@ -1030,11 +1060,12 @@ async def smm_cb(c: CallbackQuery):
         await send_final(fid)
     elif kind == "sc":
         imgs = flow.get("images") or []
-        await c.message.answer("Какую картинку берём?", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [_b(f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))]]))
+        await c.message.answer("Какой вариант берём?" if len(imgs) > 1 else "Варианты:", reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+            [_b(f"Беру {i + 1}", f"si:{fid}:{i}") for i in range(len(imgs))],
+            [_b("🖼 Картинки", f"sm:{fid}:image"), _b("🎬 Ролик", f"sm:{fid}:video"), _b("📝 Без картинки", f"sm:{fid}:none")]]))
     elif kind == "sp":
         try:
-            await send_post(flow["channel"], flow["text"], flow["image"])
+            await send_post(flow["channel"], flow["text"], flow.get("image"))
             smm_flow.update(fid, published=time.time())
             await c.message.edit_reply_markup(reply_markup=None)
             await c.message.answer(f"🚀 Опубликовано в {flow['channel']}")
