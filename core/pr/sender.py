@@ -114,7 +114,11 @@ async def start():
         if not await c.is_user_authorized():
             log.warning("PR: сессия не авторизована — повтори вход")
             await c.disconnect()
-            await _notify("⚠️ PR: аккаунт менеджера отключён (сессия не авторизована). Повтори вход на сервере.")
+            day = time.strftime("%Y-%m-%d")
+            if store.get("unauth_alert") != day:          # не чаще раза в сутки — бот перезапускается при обновлениях
+                store.put("unauth_alert", day)
+                await _notify("⚠️ PR: вход в аккаунт менеджера начат, но не завершён (не введён код или облачный пароль). "
+                              "Отбор статей и дайджест работают, отправка — нет. Закончить вход: /pr_login")
             return
     except Exception:
         log.exception("PR: не подключился к Telegram")
