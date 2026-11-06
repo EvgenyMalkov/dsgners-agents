@@ -163,6 +163,7 @@ systemctl restart dsgners-bot
 
 Настройки `.env`: `TG_API_ID`, `TG_API_HASH`, `TG_SESSION`, `PR_SENDER_NAME` — аккаунт менеджера;
 `PR_PITCH` — доводы через «|»; `PR_SEND_WINDOW=10-19`, `PR_WARMUP_LIMIT=5`, `PR_WARMUP_DAYS=14`, `PR_DAILY_LIMIT=10`,
-`PR_FOLLOWUP_DAYS=7`, `PR_CONTACT_TTL_DAYS=90`, `PR_RESOLVE_PER_DAY=40`; почта (необязательно) `SMTP_HOST`, `SMTP_PORT`,
-`SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM`; отбор — `PR_MIN_SCORE=7`, `PR_DIGEST_MAX=10`, `PR_MODEL`, `PR_MSG_MODEL`,
+`PR_FOLLOWUP_DAYS=7`, `PR_CONTACT_TTL_DAYS=90`, `PR_RESOLVE_PER_DAY=40`; почта `SMTP_HOST`, `SMTP_PORT`,
+`SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` (+ `IMAP_HOST`, `IMAP_PORT`, `PR_MAIL_POLL=180` — ответы с почты пересылаются в бот;
+почта работает и без входа в Telegram, проверка — `/pr_mailtest`); отбор — `PR_MIN_SCORE=7`, `PR_DIGEST_MAX=10`, `PR_MODEL`, `PR_MSG_MODEL`,
 `PR_MAX_AGE_DAYS`, `PR_AI_PER_RUN`, `PR_SCAN_HOUR`, `PR_DIGEST_HOUR`, адреса API площадок `PR_HABR_*`, `PR_VC_*`.

@@ -34,6 +34,10 @@ WARMUP_DAYS = int(config.env("PR_WARMUP_DAYS", "14"))
 GAP = (int(config.env("PR_GAP_MIN", "180")), int(config.env("PR_GAP_MAX", "600")))
 RESOLVE_PER_DAY = int(config.env("PR_RESOLVE_PER_DAY", "40"))
 SMTP = {k: config.env(f"SMTP_{k}", "") for k in ("HOST", "PORT", "USER", "PASSWORD", "FROM")}
+# входящие (ответы авторов): по умолчанию тот же ящик; smtp.yandex.ru → imap.yandex.ru
+IMAP_HOST = config.env("IMAP_HOST", "") or (SMTP["HOST"].replace("smtp.", "imap.", 1) if SMTP["HOST"].startswith("smtp.") else "")
+IMAP_PORT = int(config.env("IMAP_PORT", "993") or 993)
+MAIL_POLL = int(config.env("PR_MAIL_POLL", "180"))
 REFUSAL = re.compile(r"(?i)не интерес|неинтерес|не надо|не нужно|не пиши|не пишите|нет,? спасибо|отпиш|спам|не беспокой|\bstop\b|"
                      r"удалите|отстань")
 
@@ -58,6 +62,10 @@ async def _notify(text: str):
 
 def ready() -> bool:
     return _client is not None
+
+
+def mail_ready() -> bool:
+    return bool(SMTP["HOST"] and SMTP["USER"] and SMTP["PASSWORD"])
 
 
 def me() -> str:
@@ -99,7 +107,14 @@ def sent_today() -> int:
 # ---------- подключение ----------
 
 async def start():
-    """Подключить аккаунт, если вход уже сделан. Без входа — работает всё, кроме проверки @ и отправки."""
+    """Цикл отправки (Telegram и почта) и чтение ответов с почты — всегда; Telegram — если вход уже сделан."""
+    _tasks.append(asyncio.create_task(_send_loop()))
+    if mail_ready() and IMAP_HOST:
+        _tasks.append(asyncio.create_task(_mail_loop()))
+    await _start_tg()
+
+
+async def _start_tg():
     global _client, _me
     if not API_ID or not API_HASH:
         log.info("PR: нет TG_API_ID/TG_API_HASH — отправка выключена")
@@ -127,7 +142,6 @@ async def start():
     _me = await c.get_me()
     c.add_event_handler(_on_incoming, events.NewMessage(incoming=True))
     log.info("PR: аккаунт отправки %s", me())
-    _tasks.append(asyncio.create_task(_send_loop()))
 
 
 # ---------- проверка @ ----------
@@ -162,7 +176,7 @@ async def resolve(username: str) -> tuple[str, str]:
 # ---------- отправка ----------
 
 async def _send_loop():
-    while _client:
+    while True:
         try:
             await _tick()
         except Exception:
@@ -178,7 +192,11 @@ async def _tick():
         return
     if time.time() < float(store.get("next_send", 0) or 0):
         return
-    for o in store.outreach_by("approved", 20):
+    for o in store.outreach_by("approved", 50):
+        if o["channel"] == "tg" and not _client:
+            continue                              # ждёт входа в аккаунт менеджера
+        if o["channel"] == "email" and not mail_ready():
+            continue
         a = store.article(o["article_id"]) or {}
         if store.stopped(o["value"], a.get("author_url", "")):
             store.set_outreach(o["id"], status="stopped", note="в стоп-листе")
@@ -240,9 +258,14 @@ def _why(ex) -> str:
             "InputUserDeactivatedError": "аккаунт удалён"}.get(type(ex).__name__, str(ex)[:100])
 
 
-def _smtp_send(to: str, subject: str, body: str):
+def _smtp_send(to: str, subject: str, body: str) -> str:
+    import email.utils as eu
     m = EmailMessage()
     m["From"], m["To"], m["Subject"] = SMTP["FROM"] or SMTP["USER"], to, subject
+    m["Date"] = eu.formatdate(localtime=True)
+    mid = eu.make_msgid(domain=(SMTP["USER"].split("@")[-1] or "dsgners.ru"))
+    m["Message-ID"] = mid
+    m["Reply-To"] = SMTP["USER"]
     m.set_content(body)
     port = int(SMTP["PORT"] or 465)
     cls = smtplib.SMTP_SSL if port == 465 else smtplib.SMTP
@@ -251,22 +274,22 @@ def _smtp_send(to: str, subject: str, body: str):
             s.starttls()
         s.login(SMTP["USER"], SMTP["PASSWORD"])
         s.send_message(m)
+    return mid
 
 
 async def _send_mail(o: dict, a: dict):
-    if not SMTP["HOST"]:
-        store.set_outreach(o["id"], status="failed", note="почта не настроена (SMTP_*)")
-        await _notify(f"⚠️ PR: письмо {o['value']} не ушло — в .env нет SMTP_*. Отправь вручную, текст в карточке.")
-        return
     body = o["text"] + "\n\n—\nЕсли не хотите писем — просто ответьте «нет», больше не напишем."
+    subject = f"Ваша статья «{a.get('title', '')[:80]}» и дизайнерс" if a.get("track") != "company" else \
+        f"Кейсы {a.get('author', '') or 'компании'} на дизайнерс"
     try:
-        await asyncio.to_thread(_smtp_send, o["value"], f"Ваша статья «{a.get('title', '')[:80]}» и дизайнерс", body)
+        mid = await asyncio.to_thread(_smtp_send, o["value"], subject, body)
     except Exception as ex:
         store.set_outreach(o["id"], status="failed", note=str(ex)[:200])
         await _notify(f"⚠️ PR: письмо {o['value']} не ушло: {ex}")
         return
-    store.set_outreach(o["id"], status="sent", sent=time.time())
-    await _notify(f"✉️ Письмо {o['value']} — по статье «{a.get('title', '')}». Ответ придёт на почту {SMTP['USER']}.")
+    store.set_outreach(o["id"], status="sent", sent=time.time(), mail_id=mid)
+    await _notify(f"📧 Письмо {o['value']} — по статье «{a.get('title', '')}». Сегодня {sent_today()}/{limit_today()}.\n"
+                  "Ответ перешлю сюда.")
 
 
 # ---------- ответы ----------
@@ -282,6 +305,11 @@ async def _on_incoming(event):
     who = " ".join(filter(None, [getattr(sender, "first_name", ""), getattr(sender, "last_name", "")])) or a.get("author", "")
     at = f"@{sender.username}" if getattr(sender, "username", None) else f"@{o['value']}"
     text = (event.raw_text or "").strip() or "[вложение без текста]"
+    await _reply(o, a, who, at, text, "в аккаунте менеджера")
+
+
+async def _reply(o: dict, a: dict, who: str, at: str, text: str, where: str):
+    """Ответ автора → владельцу: кто, по какой статье, что мы писали и что он ответил. Отказ → стоп-лист."""
     first = o["status"] != "replied"
     store.set_outreach(o["id"], status="replied", replied=o["replied"] or time.time())
     refused = bool(REFUSAL.search(text)) and len(text) < 300
@@ -295,7 +323,7 @@ async def _on_incoming(event):
                 f"Статья: «{a.get('title', '')}» ({'Хабр' if a.get('site') == 'habr' else a.get('site', '')})\n{a.get('url', '')}\n"
                 f"Мы писали {sent}: «{o['text'][:160]}…»\n\nОтвет:\n{text[:3000]}")
         tail = ("\n\n🚫 Похоже на отказ — внёс в стоп-лист, больше не пишем." if refused else
-                "\n\nДальше переписка твоя — в аккаунте менеджера. Агент в этот диалог больше не пишет.")
+                f"\n\nДальше переписка твоя — {where}. Агент в этот диалог больше не пишет.")
         await _notify(head + tail)
     else:
         await _notify(f"💬 {who} ({at}) ещё пишет — по статье «{a.get('title', '')}»:\n{text[:3000]}"
@@ -348,3 +376,133 @@ async def spambot() -> str:
         await _notify("⛔ PR: @SpamBot пишет, что аккаунт менеджера ограничен. Отправка на паузе.\n\n" + t[:800])
         return "ограничен — пауза"
     return "без ограничений"
+
+
+# ---------- почта: ответы и отказы доставки ----------
+
+def _plain(msg) -> str:
+    """Текст письма без цитаты нашего сообщения."""
+    import html as h
+    part = None
+    if msg.is_multipart():
+        for p in msg.walk():
+            if p.get_content_type() == "text/plain" and not p.get_filename():
+                part = p
+                break
+        if part is None:
+            for p in msg.walk():
+                if p.get_content_type() == "text/html":
+                    part = p
+                    break
+    else:
+        part = msg
+    if part is None:
+        return ""
+    try:
+        t = part.get_content()
+    except Exception:
+        t = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+    if part.get_content_type() == "text/html":
+        t = h.unescape(re.sub(r"<[^>]+>", " ", re.sub(r"(?i)<br\s*/?>|</p>", "\n", t)))
+    out = []
+    for line in t.splitlines():
+        if line.strip().startswith(">") or re.match(r"(?i)^\s*(--\s*$|-----\s*original|\d{1,2}[./]\d{1,2}[./]\d{2,4}.*(пишет|wrote|написал)|"
+                                                    r"(вт|пн|ср|чт|пт|сб|вс|on|mon|tue|wed|thu|fri|sat|sun)\b.*(пишет|wrote|написал))", line):
+            if out and line.strip().startswith(">"):
+                continue
+            break
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()
+
+
+def _imap_fetch(last_uid: int) -> tuple[list[tuple[int, bytes]], int]:
+    """Новые письма (uid > last_uid) без пометки «прочитано». Первый запуск — только запомнить последний uid."""
+    import imaplib
+    with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=30) as m:
+        m.login(SMTP["USER"], SMTP["PASSWORD"])
+        m.select("INBOX", readonly=True)
+        typ, data = m.uid("search", None, f"UID {last_uid + 1}:*" if last_uid else "ALL")
+        uids = [int(x) for x in (data[0] or b"").split()]
+        uids = [u for u in uids if u > last_uid]
+        if not last_uid:
+            return [], max(uids or [0])
+        out = []
+        for u in uids[:50]:
+            typ, d = m.uid("fetch", str(u), "(BODY.PEEK[])")
+            if d and isinstance(d[0], tuple):
+                out.append((u, d[0][1]))
+        return out, max(uids or [last_uid])
+
+
+async def check_mail() -> int:
+    """Прочитать новые письма в ящике и переслать ответы авторов владельцу. Возвращает число пересланных."""
+    import email as em
+    import email.policy
+    import email.utils as eu
+    last = int(store.get("imap_last_uid", 0) or 0)
+    msgs, new_last = await asyncio.to_thread(_imap_fetch, last)
+    n = 0
+    for uid, raw in msgs:
+        msg = em.message_from_bytes(raw, policy=email.policy.default)
+        frm_name, frm = eu.parseaddr(str(msg.get("From", "")))
+        refs = re.findall(r"<[^>]+>", f"{msg.get('In-Reply-To', '')} {msg.get('References', '')}")
+        body = _plain(msg)
+        if re.search(r"(?i)mailer-daemon|postmaster", frm):        # письмо не доставлено
+            o = store.outreach_by_mail(refs, "") or next(
+                (x for x in store.outreach_by("sent", 200) if x["channel"] == "email" and x["value"].lower() in raw.decode("utf-8", "ignore").lower()), None)
+            if o:
+                store.set_outreach(o["id"], status="failed", note="письмо не доставлено")
+                await _notify(f"⚠️ PR: письмо {o['value']} не доставлено — адрес не работает.")
+            continue
+        o = store.outreach_by_mail(refs, frm)
+        if not o:
+            continue                                                # чужое письмо в ящике — не трогаем
+        a = store.article(o["article_id"]) or {}
+        await _reply(o, a, frm_name or a.get("author", ""), frm, body or "[письмо без текста]", f"на почте {SMTP['USER']}")
+        n += 1
+    store.put("imap_last_uid", new_last)
+    return n
+
+
+async def _mail_loop():
+    await asyncio.sleep(20)
+    fails = 0
+    while True:
+        try:
+            await check_mail()
+            fails = 0
+        except Exception as ex:
+            fails += 1
+            log.warning("PR mail: %s", ex)
+            if fails == 3:
+                await _notify(f"⚠️ PR: не читается почта {SMTP['USER']} ({IMAP_HOST}): {ex}\n"
+                              "Ответы с почты не пересылаются. Проверь пароль приложения и что IMAP включён: /pr_mailtest")
+        await asyncio.sleep(MAIL_POLL)
+
+
+async def mail_test() -> str:
+    """Проверка: отправить себе тестовое письмо и зайти в ящик по IMAP."""
+    if not mail_ready():
+        return "Почта не настроена: в .env нет SMTP_HOST / SMTP_USER / SMTP_PASSWORD."
+    lines = [f"Ящик: {SMTP['USER']} · SMTP {SMTP['HOST']}:{SMTP['PORT'] or 465} · IMAP {IMAP_HOST or '—'}:{IMAP_PORT}"]
+    try:
+        await asyncio.to_thread(_smtp_send, SMTP["USER"], "Проверка PR-агента дизайнерс",
+                                "Это тестовое письмо от PR-агента. Если оно пришло — отправка работает.")
+        lines.append("✅ Отправка (SMTP): тестовое письмо ушло на этот же ящик")
+    except Exception as ex:
+        lines.append(f"❌ Отправка (SMTP): {ex}")
+    if IMAP_HOST:
+        try:
+            import imaplib
+
+            def _login():
+                with imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT, timeout=30) as m:
+                    m.login(SMTP["USER"], SMTP["PASSWORD"])
+                    m.select("INBOX", readonly=True)
+            await asyncio.to_thread(_login)
+            lines.append("✅ Чтение (IMAP): вхожу в ящик — ответы авторов буду пересылать сюда")
+        except Exception as ex:
+            lines.append(f"❌ Чтение (IMAP): {ex} — включи доступ по IMAP в настройках почты")
+    else:
+        lines.append("⚠️ IMAP не задан (IMAP_HOST) — ответы с почты пересылаться не будут")
+    return "\n".join(lines)

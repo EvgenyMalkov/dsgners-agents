@@ -169,6 +169,13 @@ async def pr_stop(m: Message):
     await m.answer(f"🚫 {key} в стоп-листе навсегда." + (f" Снял из очереди: {n}." if n else ""))
 
 
+async def pr_mailtest(m: Message):
+    if not _owner(m):
+        return
+    await m.answer("📧 Проверяю почту: отправляю тестовое письмо и захожу в ящик…")
+    await m.answer(await sender.mail_test())
+
+
 async def pr_login(m: Message):
     if not _owner(m):
         return
@@ -250,9 +257,11 @@ async def pr_action(c: CallbackQuery):
     if act == "s":
         o = jobs.approve(oid)
         msg = "В очереди. Уйдёт в окно отправки" if o["status"] == "approved" else "Уже не черновик"
-        if not sender.ready() and o["channel"] == "tg":
-            msg += " — но аккаунт менеджера не подключён (/pr_login)"
-        await c.answer(msg, show_alert=not sender.ready())
+        blocked = (o["channel"] == "tg" and not sender.ready()) or (o["channel"] == "email" and not sender.mail_ready())
+        if blocked:
+            msg += (" — но аккаунт менеджера не подключён (/pr_login)" if o["channel"] == "tg"
+                    else " — но почта не настроена (/pr_mailtest)")
+        await c.answer(msg, show_alert=blocked)
     elif act == "u":
         if o["status"] == "approved":
             store.set_outreach(oid, status="draft")
@@ -293,7 +302,8 @@ async def pr_edit_text(m: Message):
 def register(dp: Dispatcher):
     for name, fn in (("pr_scan", pr_scan), ("pr_digest", pr_digest), ("pr_test", pr_test), ("pr_status", pr_status),
                      ("pr_src", pr_src), ("pr_report", pr_report), ("pr_author", pr_author), ("pr_outreach", pr_outreach),
-                     ("pr_pause", pr_pause), ("pr_resume", pr_resume), ("pr_stop", pr_stop), ("pr_login", pr_login)):
+                     ("pr_pause", pr_pause), ("pr_resume", pr_resume), ("pr_stop", pr_stop), ("pr_login", pr_login),
+                     ("pr_mailtest", pr_mailtest)):
         dp.message.register(fn, Command(name))
     dp.message.register(pr_edit_text, F.text, lambda m: bool(m.from_user) and m.from_user.id in WAIT_EDIT
                         and not (m.text or "").startswith("/"))

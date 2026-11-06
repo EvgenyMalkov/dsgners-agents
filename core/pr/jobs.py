@@ -330,10 +330,10 @@ async def digest() -> str:
 
 
 def sender_line() -> str:
-    if not sender.ready():
-        return "аккаунт менеджера не подключён (/pr_login)"
+    tg = (f"Telegram {sender.me()}" if sender.ready() else "Telegram не подключён (/pr_login)")
+    mail = (f"почта {sender.SMTP['USER']}" if sender.mail_ready() else "почта не настроена")
     p = sender.paused()
-    return (f"{sender.me()} · сегодня {sender.sent_today()}/{sender.limit_today()} · окно "
+    return (f"{tg} · {mail} · сегодня {sender.sent_today()}/{sender.limit_today()} · окно "
             f"{sender.WINDOW[0]}:00–{sender.WINDOW[1]}:00" + (f" · ⏸ пауза: {p}" if p else ""))
 
 

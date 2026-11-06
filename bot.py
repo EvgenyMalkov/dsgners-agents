@@ -26,7 +26,7 @@ dp = Dispatcher()
 # PR-агент: команды /pr_* регистрируем первыми — раньше общего обработчика текста
 from core.pr import jobs as pr_jobs, tg as pr_tg  # noqa: E402
 from core.pr.tg import (pr_author, pr_digest, pr_login, pr_outreach, pr_pause, pr_report, pr_resume,  # noqa: E402,F401
-                        pr_scan, pr_src, pr_status, pr_stop, pr_test)
+                        pr_scan, pr_src, pr_status, pr_stop, pr_test, pr_mailtest)
 pr_tg.register(dp)
 WAIT_REASON: dict[int, str] = {}
 MSG_JOB: dict[int, str] = {}      # message_id сообщений с результатом -> job_id (ответ на них = правка)  # user_id -> job_id, ждём причину переделки
@@ -853,7 +853,8 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("🔗 Разобрать статью", "i:pr_author"), _b("📊 Статус", "c:/pr_status")],
                 [_b("📈 Итоги недели", "c:/pr_report"), _b("🧪 Проверить источники", "c:/pr_test")],
                 [_b("⏸ Пауза отправки", "c:/pr_pause"), _b("▶️ Продолжить", "c:/pr_resume")],
-                [_b("📚 Источники", "c:/pr_src list"), _b("👤 Аккаунт менеджера", "c:/pr_login")], back]
+                [_b("📚 Источники", "c:/pr_src list"), _b("👤 Аккаунт менеджера", "c:/pr_login")],
+                [_b("📧 Проверить почту", "c:/pr_mailtest")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
                 [_b("Ежедневная", "c:/seo_scan daily"), _b("Недельный отчёт", "c:/seo_scan weekly")],
@@ -891,7 +892,7 @@ CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_sca
         "geo_check": "geo_check", "geo_q": "geo_q", "geo_report": "geo_report", "geo_fix": "geo_fix",
         "pr_digest": "pr_digest", "pr_scan": "pr_scan", "pr_status": "pr_status", "pr_test": "pr_test", "pr_src": "pr_src",
         "pr_author": "pr_author", "pr_report": "pr_report", "pr_pause": "pr_pause", "pr_resume": "pr_resume",
-        "pr_login": "pr_login", "pr_outreach": "pr_outreach", "pr_stop": "pr_stop"}
+        "pr_login": "pr_login", "pr_mailtest": "pr_mailtest", "pr_outreach": "pr_outreach", "pr_stop": "pr_stop"}
 
 
 async def run_cmd(m: Message, user, text: str):

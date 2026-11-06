@@ -55,6 +55,9 @@ def db() -> sqlite3.Connection:
                           ("track", "TEXT DEFAULT 'author'"), ("author_score", "REAL")):
             if col not in cols:
                 _db.execute(f"ALTER TABLE articles ADD COLUMN {col} {ddl}")
+        ocols = {r[1] for r in _db.execute("PRAGMA table_info(outreach)")}
+        if "mail_id" not in ocols:
+            _db.execute("ALTER TABLE outreach ADD COLUMN mail_id TEXT DEFAULT ''")   # Message-ID письма — найти ответ
         if not _db.execute("SELECT COUNT(*) FROM sources").fetchone()[0]:
             for kind, url, title in DEFAULT_SOURCES:
                 add_source(kind, url, title)
@@ -352,3 +355,14 @@ def has_followup(article_id: int) -> bool:
 
 def outreach_for_article(article_id: int) -> list[dict]:
     return [dict(r) for r in db().execute("SELECT * FROM outreach WHERE article_id=? ORDER BY id", (article_id,))]
+
+
+def outreach_by_mail(mail_ids: list[str], sender_email: str) -> dict | None:
+    """Наше письмо, на которое пришёл ответ: по In-Reply-To/References, иначе по адресу отправителя."""
+    for mid in mail_ids:
+        r = db().execute("SELECT * FROM outreach WHERE mail_id=? AND mail_id!=''", (mid.strip(),)).fetchone()
+        if r:
+            return dict(r)
+    r = db().execute("SELECT * FROM outreach WHERE channel='email' AND lower(value)=? AND status IN ('sent','read','replied') "
+                     "ORDER BY sent DESC LIMIT 1", (sender_email.lower(),)).fetchone()
+    return dict(r) if r else None
