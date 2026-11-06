@@ -697,6 +697,27 @@ async def cluster_cmd(m: Message):
         return
     from core.seo import cluster
     arg = (m.text or "").partition(" ")[2].strip().lower() or "branding"
+    if arg in ("all", "все"):
+        from core.seo import inventory
+        dirs = [d for d in inventory.T if d != "Брендинг"]
+        await m.answer(f"Собираю кластеры по {len(dirs)} направлениям ({', '.join(dirs)}) — по очереди, "
+                       f"около {len(dirs) * 3} минут. Пришлю один файл со всеми.")
+
+        async def go_all():
+            parts, failed = [], []
+            for d in dirs:
+                try:
+                    parts.append(Path(await cluster.build(d)).read_text("utf-8"))
+                except Exception as e:
+                    failed.append(f"{d}: {e}"[:200])
+            out = config.OUTBOX / "seo-plan" / f"cluster-all-{time.strftime('%Y-%m-%d')}.md"
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text("\n\n---\n\n".join(parts), "utf-8")
+            await m.answer_document(FSInputFile(out), caption=f"🧩 Кластеры по {len(parts)} направлениям — перешли Claude")
+            if failed:
+                await m.answer("Не собрались:\n" + "\n".join(failed))
+        asyncio.create_task(go_all())
+        return
     direction = CLUSTER_ALIASES.get(arg, arg.capitalize())
     await m.answer(f"Собираю кластер «{direction}»: Вордстат по каждой подтеме, наши статьи, Метрика и Вебмастер. 2–5 минут.")
 
