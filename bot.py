@@ -28,6 +28,11 @@ from core.pr import jobs as pr_jobs, tg as pr_tg  # noqa: E402
 from core.pr.tg import (pr_author, pr_digest, pr_login, pr_outreach, pr_pause, pr_report, pr_resume,  # noqa: E402,F401
                         pr_scan, pr_src, pr_status, pr_stop, pr_test, pr_mailtest)
 pr_tg.register(dp)
+# Директ-агент: команды /direct_*
+from core.direct import jobs as direct_jobs, tg as direct_tg  # noqa: E402
+from core.direct.tg import (direct_exclude, direct_funnel, direct_keep, direct_places, direct_report,  # noqa: E402,F401
+                            direct_status, direct_sync)
+direct_tg.register(dp)
 WAIT_REASON: dict[int, str] = {}
 MSG_JOB: dict[int, str] = {}      # message_id сообщений с результатом -> job_id (ответ на них = правка)  # user_id -> job_id, ждём причину переделки
 WAIT_BULK: set[int] = set()       # ждём комментарий к пробной партии массового SEO
@@ -848,6 +853,7 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
         rows = [[_b("🎨 Графический дизайнер", "a:designer")],
                 [_b("🖥 Веб-дизайнер", "a:webdesigner"), _b("📣 SMM", "a:smm")],
                 [_b("🔎 SEO ▸", "m:seo"), _b("🤝 PR ▸", "m:pr")],
+                [_b("📈 Директ ▸", "m:direct")],
                 [_b("⚙️ Система ▸", "m:sys")]]
         if office_url():
             rows.insert(3, [InlineKeyboardButton(text="🏢 Открыть ИИ-офис", web_app=WebAppInfo(url=office_url()))])
@@ -876,6 +882,10 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
                 [_b("⏸ Пауза отправки", "c:/pr_pause"), _b("▶️ Продолжить", "c:/pr_resume")],
                 [_b("📚 Источники", "c:/pr_src list"), _b("👤 Аккаунт менеджера", "c:/pr_login")],
                 [_b("📧 Проверить почту", "c:/pr_mailtest")], back]
+    elif name == "direct":
+        rows = [[_b("📊 Сводка за вчера", "c:/direct_report"), _b("📈 Неделя", "c:/direct_report week")],
+                [_b("🔻 Воронка", "c:/direct_funnel"), _b("🗑 Мусорные площадки", "c:/direct_places")],
+                [_b("🔄 Обновить данные", "c:/direct_sync"), _b("ℹ️ Статус", "c:/direct_status")], back]
     elif name == "scan":
         rows = [[_b("Быстрая (час)", "c:/seo_scan hourly"), _b("Новые страницы", "c:/seo_scan new")],
                 [_b("Ежедневная", "c:/seo_scan daily"), _b("Недельный отчёт", "c:/seo_scan weekly")],
@@ -895,7 +905,8 @@ def menu_kb(name: str) -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup(inline_keyboard=rows)
 
 
-MENU_TITLES = {"main": HELP, "seo": "🔎 SEO-шник", "pr": "🤝 PR-агент: ищет авторов на vc.ru и Хабре, дайджест в 10:00", "scan": "🔍 Какую проверку запустить?", "sys": "⚙️ Система",
+MENU_TITLES = {"main": HELP, "seo": "🔎 SEO-шник", "pr": "🤝 PR-агент: ищет авторов на vc.ru и Хабре, дайджест в 10:00",
+               "direct": "📈 Директ-агент: сводка в 09:00, неделя по понедельникам. Пока только читает, площадки исключает по кнопке", "scan": "🔍 Какую проверку запустить?", "sys": "⚙️ Система",
                "rules": "📏 Правила, выученные из твоих правок — чьи показать?",
                "rollback": "↩️ Вернуть предыдущую версию системы? Нужно, только если после обновления что-то сломалось."}
 ASK = {"article": "✍️ Тема статьи? Можно добавить ссылки на работы авторов, которые стоит показать.",
@@ -913,7 +924,9 @@ CMDS = {"seo_plan": "seo_plan", "seo_status": "seo_status", "seo_scan": "seo_sca
         "geo_check": "geo_check", "geo_q": "geo_q", "geo_report": "geo_report", "geo_fix": "geo_fix",
         "pr_digest": "pr_digest", "pr_scan": "pr_scan", "pr_status": "pr_status", "pr_test": "pr_test", "pr_src": "pr_src",
         "pr_author": "pr_author", "pr_report": "pr_report", "pr_pause": "pr_pause", "pr_resume": "pr_resume",
-        "pr_login": "pr_login", "pr_mailtest": "pr_mailtest", "pr_outreach": "pr_outreach", "pr_stop": "pr_stop"}
+        "pr_login": "pr_login", "pr_mailtest": "pr_mailtest", "pr_outreach": "pr_outreach", "pr_stop": "pr_stop",
+        "direct_report": "direct_report", "direct_funnel": "direct_funnel", "direct_places": "direct_places",
+        "direct_sync": "direct_sync", "direct_status": "direct_status"}
 
 
 async def run_cmd(m: Message, user, text: str):
@@ -1332,11 +1345,13 @@ async def main():
     seo_monitor.setup(seo_notify, seo_start_job)
     asyncio.create_task(seo_scheduler.loop())
     asyncio.create_task(pr_jobs.loop())
+    asyncio.create_task(direct_jobs.loop())
     if not config.TELEGRAM_BOT_TOKEN:
         logging.warning("Нет TELEGRAM_BOT_TOKEN — работает только офис")
         await asyncio.Event().wait()
     BOT = Bot(config.TELEGRAM_BOT_TOKEN)
     pr_tg.setup(BOT)
+    direct_tg.setup(BOT)
     try:
         from aiogram.types import BotCommand
         await BOT.set_my_commands([BotCommand(command="menu", description="Меню"),

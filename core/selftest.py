@@ -27,6 +27,14 @@ async def main() -> int:
     assert items and items[0].url.endswith("/123456/"), "разбор RSS сломан"
     art = pr_sources.Article(url="https://vc.ru/x/1", site="vc", title="Кейс", text="дизайн " * 2000, images=0)
     assert pr_score.filter_reason(art, "vc") == "" and pr_jobs.status(), "фильтр PR сломан"
+    from core.direct import api as dr_api, jobs as dr_jobs  # noqa: F401 — Директ-агент
+    rows = dr_api.parse_tsv("Date\tCampaignId\tPlacement\tClicks\tCost\tSessions\tBounces\n"
+                            "2026-11-01\t7\tgame.app\t40\t120.5\t38\t35\n2026-11-01\t7\tgood.ru\t40\t100\t39\t5\n")
+    assert rows and rows[0]["CampaignId"] == 7 and rows[0]["Cost"] == 120.5, "разбор отчёта Директа сломан"
+    bad = dr_jobs.junk([{"placement": r["Placement"], "clicks": r["Clicks"], "cost": r["Cost"],
+                         "sessions": r["Sessions"], "bounces": r["Bounces"]} for r in rows])
+    assert [b["placement"] for b in bad] == ["game.app"], "поиск мусорных площадок сломан"
+    assert dr_jobs.status(), "статус Директа сломан"
     for a, meta in AGENTS.items():
         if meta["active"]:
             tools = importlib.import_module(f"agents.{a}.tools")
